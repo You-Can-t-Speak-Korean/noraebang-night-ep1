@@ -1,0 +1,48 @@
+; Engine configuration file.
+; Noraebang Night — Act 1: 국민학교 시대
+
+config_version=5
+
+[application]
+
+config/name="노래방 나이트: 국민학교 시대"
+config/description="Noraebang Night, Act 1. A <니가 한국어 못해> game."
+run/main_scene="res://scenes/opening/opening.tscn"
+config/features=PackedStringArray("4.7")
+
+[autoload]
+
+DialogueManager="*res://addons/dialogue_manager/dialogue_manager.gd"
+GameState="*res://scripts/game_state.gd"
+
+[display]
+
+window/size/viewport_width=640
+window/size/viewport_height=360
+window/size/window_width_override=1280
+window/size/window_height_override=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+window/handheld/orientation=0
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/dialogue_manager/plugin.cfg")
+
+[gui]
+
+theme/custom_font="res://art/fonts/Galmuri11.ttf"
+theme/default_font_antialiasing=0
+
+[internationalization]
+
+locale/translations_pot_files=PackedStringArray("res://data/dialogue/scene_00_opening.dialogue")
+
+[rendering]
+
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)
+
+textures/canvas_textures/default_texture_filter=0
+2d/snap/snap_2d_transforms_to_pixel=true
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

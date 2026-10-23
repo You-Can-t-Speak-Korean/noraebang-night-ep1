@@ -1,0 +1,13 @@
+# Godot
+.godot/
+*.translation
+export/
+export_presets.cfg
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated music work files (keep finals in audio/)
+audio/**/*.wip.*

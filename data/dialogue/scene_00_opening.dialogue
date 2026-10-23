@@ -1,0 +1,52 @@
+# SCENE 00 — OPENING
+# Act 1: 국민학교 시대 · Night, 26 Oct 1979 → Morning, 27 Oct 1979
+# Script approved 22 Oct 2026.
+#
+# Stage directions are mutations ($> ...) on the opening scene
+# (scenes/opening/opening.gd). Each one plays its animation and waits.
+# Writer's rule: every choice does exactly ONE thing — +1 눈치, −1 비밀, or nothing.
+
+~ start
+
+$> GameState.reset_act()
+$> GameState.set_boss("banjang")
+
+# ── 00-A THE DINNER (cutscene) ────────────────────────────────
+$> stage("dinner")
+진두통: [speed=0.6]그 새우, 그 짜장…[next=auto]
+진두통: [speed=0.6]비 오는 날 먹었던…[next=auto]
+박뻥희: [speed=0.8]그 새우, 그 짜아앙—[next=0.6]
+$> bang()
+진두통: [speed=0.4]…[next=1.2]
+$> title_smear()
+
+# ── 00-B THE CLASSROOM ────────────────────────────────────────
+$> stage("classroom")
+TV 앵커: …박뻥희 대통령께서 어젯밤 서거하셨습니다.
+TV 앵커: 전국의 모든 방송은 오늘부터…
+남자애 1: 야, 오늘 만화 안 해?
+남자애 2: 몰라. 딱지나 해.
+$> boram_enters()
+$> board_add("장보람")
+보람: …?
+
+# ── 00-C FIRST CHOICE ─────────────────────────────────────────
+$> tutorial("답을 누르세요. 어떤 답은 나중에 도움이 돼요.")
+반장: 장보람. 떠들었어. 이름 적었어.
+- 미안해…
+	$> GameState.lose_secret("pride")
+	반장: 응. 다음부터 조용히 해.
+- 나 아무 말도 안 했는데?
+	반장: 지금 했잖아.
+	$> board_check("장보람")
+- 어? 선생님 오신다!
+	$> GameState.add_nunchi(1)
+	$> board_wipe()
+	아무도 고맙다고 하지 않았다.
+
+# ── 00-D HANDOFF ──────────────────────────────────────────────
+$> teacher_enters()
+선생님: 김은주.
+은주: 네!
+$> eunju_stares()
+=> END
