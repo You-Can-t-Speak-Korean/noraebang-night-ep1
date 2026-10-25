@@ -1,0 +1,19 @@
+{
+  "title": "Map 01 — 국민학교 (1979)",
+  "start_room": "hallway_1f",
+  "start_spawn": "start",
+  "rooms": {
+    "gate": "res://maps/map_01/gate.tscn",
+    "playground": "res://maps/map_01/playground.tscn",
+    "entrance": "res://maps/map_01/entrance.tscn",
+    "hallway_1f": "res://maps/map_01/hallway_1f.tscn",
+    "office": "res://maps/map_01/office.tscn",
+    "classroom_1_3": "res://maps/map_01/classroom_1_3.tscn",
+    "restroom": "res://maps/map_01/restroom.tscn",
+    "stairs": "res://maps/map_01/stairs.tscn",
+    "hallway_2f": "res://maps/map_01/hallway_2f.tscn",
+    "alley": "res://maps/map_01/alley.tscn",
+    "radio_shop": "res://maps/map_01/radio_shop.tscn",
+    "stationery": "res://maps/map_01/stationery.tscn"
+  }
+}

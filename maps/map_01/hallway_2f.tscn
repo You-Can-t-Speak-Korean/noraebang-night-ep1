@@ -1,0 +1,26 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="hallway_2f" instance=ExtResource("1")]
+room_id = "hallway_2f"
+room_title = "2층 복도"
+bounds_left = -16.0
+bounds_right = 16.0
+wall_color = Color(0.45, 0.47, 0.5, 1)
+
+[node name="To_stairs" parent="." instance=ExtResource("2")]
+position = Vector3(-14, 0, -7.85)
+label_text = "계단"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "stairs"
+target_spawn = "from_hallway_2f"
+
+[node name="from_stairs" parent="." instance=ExtResource("3")]
+position = Vector3(-14, 0, 0)

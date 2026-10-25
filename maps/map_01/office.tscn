@@ -1,0 +1,36 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="office" instance=ExtResource("1")]
+room_id = "office"
+room_title = "교무실"
+bounds_left = -7.0
+bounds_right = 7.0
+wall_color = Color(0.52, 0.48, 0.45, 1)
+
+[node name="To_hallway_1f" parent="." instance=ExtResource("2")]
+position = Vector3(0, 0, -7.85)
+label_text = "1층 복도"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "hallway_1f"
+target_spawn = "from_office"
+
+[node name="from_hallway_1f" parent="." instance=ExtResource("3")]
+position = Vector3(0, 0, 0)
+
+[node name="Desk1" parent="." instance=ExtResource("4")]
+position = Vector3(-4, 0, -5.5)
+size = Vector3(2.0, 0.9, 1.0)
+color = Color(0.45, 0.4, 0.35, 1)
+
+[node name="Desk2" parent="." instance=ExtResource("4")]
+position = Vector3(4, 0, -5.5)
+size = Vector3(2.0, 0.9, 1.0)
+color = Color(0.45, 0.4, 0.35, 1)

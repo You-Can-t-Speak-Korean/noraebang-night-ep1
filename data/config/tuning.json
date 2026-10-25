@@ -1,5 +1,7 @@
 {
   "hearts_max_halves": 10,
   "nunchi_cap": 7,
-  "nunchi_overflow_ddeok_per_point": 1
+  "nunchi_overflow_ddeok_per_point": 1,
+  "lane_count": 3,
+  "lane_spacing": 1.5
 }

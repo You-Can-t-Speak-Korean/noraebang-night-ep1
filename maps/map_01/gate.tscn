@@ -1,0 +1,48 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="gate" instance=ExtResource("1")]
+room_id = "gate"
+room_title = "교문"
+bounds_left = -10.0
+bounds_right = 10.0
+wall_color = Color(0.5, 0.52, 0.5, 1)
+
+[node name="To_playground" parent="." instance=ExtResource("2")]
+position = Vector3(8, 0, -7.85)
+label_text = "운동장"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "playground"
+target_spawn = "from_gate"
+
+[node name="from_playground" parent="." instance=ExtResource("3")]
+position = Vector3(8, 0, 0)
+
+[node name="To_alley" parent="." instance=ExtResource("2")]
+position = Vector3(-6, 0, -7.85)
+label_text = "골목길"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "alley"
+target_spawn = "from_gate"
+
+[node name="from_alley" parent="." instance=ExtResource("3")]
+position = Vector3(-6, 0, 0)
+
+[node name="Pillar1" parent="." instance=ExtResource("4")]
+position = Vector3(-1, 0, -7.4)
+size = Vector3(0.6, 3.2, 0.6)
+color = Color(0.35, 0.35, 0.37, 1)
+
+[node name="Pillar2" parent="." instance=ExtResource("4")]
+position = Vector3(2, 0, -7.4)
+size = Vector3(0.6, 3.2, 0.6)
+color = Color(0.35, 0.35, 0.37, 1)

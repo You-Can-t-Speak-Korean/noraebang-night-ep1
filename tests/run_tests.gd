@@ -28,6 +28,10 @@ func _initialize() -> void:
 	_test_helpers()
 	_test_project()
 	await _test_stage()
+	_test_movement_pure()
+	await _test_player()
+	_test_map_graph()
+	await _test_map_walk()
 	print("\n%d checks, %d failed" % [checks, failures])
 	quit(1 if failures > 0 else 0)
 
@@ -463,7 +467,7 @@ func _test_stage() -> void:
 	var stage := packed.instantiate()
 	root.add_child(stage)
 	await process_frame
-	check(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/test_stage.tscn", "test stage is the main scene")
+	check(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/map_01.tscn", "Map 01 is the main scene")
 	check(stage.find_children("*", "Camera3D", true, false).size() == 1, "exactly one Camera3D")
 	check(stage.find_children("*", "Light3D", true, false).size() == 1, "exactly one light")
 	var envs := stage.find_children("*", "WorldEnvironment", true, false)
@@ -476,3 +480,235 @@ func _test_stage() -> void:
 	var lights := stage.find_children("*", "Light3D", true, false)
 	check(lights[0].shadow_enabled and lights[0].light_volumetric_fog_energy > 0.0, "light has shadows and volumetric energy")
 	stage.queue_free()
+
+
+# ── Walking (Step 2a) ──────────────────────────────────────────────────
+
+const PlayerScene := preload("res://characters/player.tscn")
+const PlayerScript := preload("res://scripts/player.gd")
+const MAP_DATA := "res://data/maps/map_01.json"
+
+
+func _frames(n: int) -> void:
+	for i in n:
+		await physics_frame
+	await process_frame
+
+
+func _press(action: String) -> void:
+	var e := InputEventAction.new()
+	e.action = action
+	e.pressed = true
+	Input.parse_input_event(e)
+	await _frames(2)
+	var r := InputEventAction.new()
+	r.action = action
+	r.pressed = false
+	Input.parse_input_event(r)
+	await _frames(1)
+
+
+func _test_movement_pure() -> void:
+	print("Lanes (pure)")
+	check(PlayerScript.clamp_lane(-1, 3) == 0 and PlayerScript.clamp_lane(0, 3) == 0, "clamp_lane floor")
+	check(PlayerScript.clamp_lane(3, 3) == 2 and PlayerScript.clamp_lane(2, 3) == 2, "clamp_lane ceiling")
+	check(PlayerScript.clamp_lane(5, 1) == 0, "single lane always 0")
+	check(PlayerScript.stepped_lane(0, 1, 3) == 1 and PlayerScript.stepped_lane(1, 1, 3) == 2, "step deeper")
+	check(PlayerScript.stepped_lane(2, 1, 3) == 2, "stepping deeper at the last lane stays")
+	check(PlayerScript.stepped_lane(0, -1, 3) == 0, "stepping nearer at lane 0 stays")
+	check(PlayerScript.stepped_lane(2, -1, 3) == 1, "step nearer")
+	var cfg: Dictionary = preload("res://scripts/tuning.gd").lane_config()
+	check(cfg["lane_count"] == 3 and is_equal_approx(cfg["lane_spacing"], 1.5), "tuning.json: 3 lanes, spacing 1.5")
+
+
+func _test_player() -> void:
+	print("Player")
+	var room: Node3D = load("res://maps/map_01/hallway_1f.tscn").instantiate()
+	root.add_child(room)
+	var p: Node3D = PlayerScene.instantiate()
+	root.add_child(p)
+	p.configure_room(room)
+	p.place(0.0, 0)
+	check(is_equal_approx(p.position.z, room.lane_origin_z), "lane 0 at the room's lane origin")
+	check(is_equal_approx(p.lane_z(1), room.lane_origin_z - 1.5), "lane 1 is one spacing deeper")
+	p.walk(1.0, 1.0)
+	check(is_equal_approx(p.position.x, p.walk_speed), "walk moves along x")
+	p.walk(1.0, 100.0)
+	check(is_equal_approx(p.position.x, room.bounds_right), "walk clamps at the right bound")
+	p.walk(-1.0, 100.0)
+	check(is_equal_approx(p.position.x, room.bounds_left), "walk clamps at the left bound")
+
+	p.place(0.0, 0)
+	p.step_lane(1)
+	p.step_lane(1)
+	p.step_lane(1)
+	check(p.lane == 2, "lane steps clamp at the deepest lane")
+	await _frames(40)
+	check(is_equal_approx(p.position.z, p.lane_z(2)), "lane change is smooth and arrives")
+
+	p.movement_locked = true
+	var x0: float = p.position.x
+	var lane0: int = p.lane
+	p.walk(1.0, 1.0)
+	p.step_lane(-1)
+	check(p.position.x == x0 and p.lane == lane0, "movement_locked blocks walk and lane steps")
+	Input.action_press("move_right")
+	await _frames(4)
+	check(p.position.x == x0, "movement_locked blocks real input")
+	p.movement_locked = false
+	await _frames(4)
+	check(p.position.x > x0, "unlocked: held D moves the player")
+	Input.action_release("move_right")
+	await _press("move_down")
+	check(p.lane == 1, "pressing S steps one lane nearer")
+	await _press("move_up")
+	check(p.lane == 2, "pressing W steps one lane deeper")
+	p.queue_free()
+	room.queue_free()
+	await _frames(1)
+
+
+func _door_list(room: Node) -> Array:
+	return room.get_children().filter(func(c): return c.has_method("is_door"))
+
+
+func _test_map_graph() -> void:
+	print("Map graph")
+	var data = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))
+	var rooms: Dictionary = data["rooms"]
+	check(rooms.size() == 12, "12 rooms registered")
+	var scenes := {}
+	for id in rooms:
+		var packed = load(rooms[id])
+		check(packed != null, "room scene loads: %s" % id)
+		if packed != null:
+			scenes[id] = packed.instantiate()
+	check(rooms.has(data["start_room"]) and scenes[data["start_room"]].get_spawn(data["start_spawn"]) != null, "start room and spawn exist")
+	var locked := []
+	for id in scenes:
+		var r: Node = scenes[id]
+		check(r.room_id == id, "%s: room_id matches registry" % id)
+		check(r.bounds_left < r.bounds_right, "%s: bounds are ordered" % id)
+		for d in _door_list(r):
+			var tag := "%s -> %s" % [id, d.target_room]
+			check(scenes.has(d.target_room), "%s: target room exists" % tag)
+			if not scenes.has(d.target_room):
+				continue
+			var target: Node = scenes[d.target_room]
+			var spawn: Node3D = target.get_spawn(d.target_spawn)
+			check(spawn != null, "%s: spawn '%s' exists" % [tag, d.target_spawn])
+			if spawn != null:
+				check(spawn.position.x >= target.bounds_left and spawn.position.x <= target.bounds_right, "%s: spawn is inside bounds" % tag)
+			if d.locked:
+				locked.append(tag)
+			else:
+				var back := _door_list(target).filter(func(t): return t.target_room == id)
+				check(not back.is_empty(), "%s: has a return door" % tag)
+	locked.sort()
+	check(locked == ["alley -> stationery", "stairs -> hallway_2f"], "locked doors: 2층 복도 and 문방구 (%s)" % str(locked))
+	var classroom: Node = scenes["classroom_1_3"]
+	var things := classroom.get_children().filter(func(c): return c.has_method("interact") and not c.has_method("is_door"))
+	check(things.size() >= 2, "1학년 3반 has %d sample interactables" % things.size())
+	for s in scenes.values():
+		s.free()
+
+
+func _wait_transition(world: Node) -> void:
+	var guard := 0
+	while world.transitioning and guard < 120:
+		guard += 1
+		await process_frame
+	await _frames(2)
+
+
+func _confirm_at(world: Node, door: Node3D) -> void:
+	world.player.place(door.position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	await _wait_transition(world)
+
+
+func _explore(world: Node, visited: Dictionary) -> void:
+	var here: String = world.room_id
+	visited[here] = true
+	var descriptors := []
+	for d in _door_list(world.room):
+		descriptors.append({"name": d.name, "target": d.target_room, "locked": d.locked})
+	for desc in descriptors:
+		var door: Node3D = world.room.get_node(NodePath(desc["name"]))
+		var tag := "%s -> %s" % [here, desc["target"]]
+		if desc["locked"]:
+			world.player.place(door.position.x, 0)
+			await _frames(3)
+			check(world.player.current_interactable == door, "%s: prompt target is the locked door" % tag)
+			await _press("confirm")
+			check(world.room_id == here and world._text_open and world.player.movement_locked, "%s: locked door shows a message and stays" % tag)
+			await _press("confirm")
+			check(not world._text_open and not world.player.movement_locked, "%s: message closes" % tag)
+			continue
+		if visited.has(desc["target"]):
+			continue
+		await _confirm_at(world, door)
+		check(world.room_id == desc["target"], "walked %s" % tag)
+		if world.room_id != desc["target"]:
+			return
+		# Arriving puts the player at the return door.
+		await _frames(3)
+		var arrived = world.player.current_interactable
+		check(arrived != null and arrived.has_method("is_door") and arrived.target_room == here, "%s: arrives at the return door" % tag)
+		await _explore(world, visited)
+		var back: Array = _door_list(world.room).filter(func(t): return t.target_room == here)
+		world.player.place(back[0].position.x, 0)
+		await _frames(3)
+		await _press("confirm")
+		await _wait_transition(world)
+		check(world.room_id == here, "returned %s <- %s" % [here, desc["target"]])
+		if world.room_id != here:
+			return
+
+
+func _test_map_walk() -> void:
+	print("Map walk (simulated input)")
+	var world: Node = load("res://scenes/map_01.tscn").instantiate()
+	root.add_child(world)
+	world.fade_time = 0.0
+	await _frames(3)
+	check(world.room_id == "hallway_1f", "starts in 1층 복도")
+	check(world.player.position.x == -3.0, "starts at the 'start' spawn")
+
+	# Camera follows the player but stays inside the room.
+	world.player.place(-18.0, 0)
+	world.room.update_camera()
+	check(is_equal_approx(world.room.camera.position.x, world.room.bounds_left - 1.0 + 9.0), "camera stops at the left edge")
+	world.player.place(5.0, 0)
+	world.room.update_camera()
+	check(is_equal_approx(world.room.camera.position.x, 5.0), "camera follows the player inside the room")
+	world.player.place(-3.0, 0)
+
+	# Sample interactable: shows placeholder text, locks movement, then closes.
+	await _confirm_at(world, world.room.get_node("To_classroom_1_3"))
+	check(world.room_id == "classroom_1_3", "entered 1학년 3반")
+	var stove: Node3D = world.room.get_node("Stove")
+	world.player.place(stove.position.x, 0)
+	await _frames(3)
+	check(world.player.current_interactable == stove, "prompt appears at the stove")
+	check(world.player.get_node("Prompt").visible and world.player.get_node("Prompt").text == "Enter", "prompt says Enter")
+	await _press("confirm")
+	check(world._text_open and world._text_label.text == stove.placeholder_line and world.player.movement_locked, "stove shows its placeholder line")
+	check(not world.player.get_node("Prompt").visible, "prompt hidden while text is open")
+	await _press("confirm")
+	check(not world._text_open and not world.player.movement_locked, "text closes, movement unlocked")
+	world.player.place(-4.5, 0)
+	await _frames(3)
+	check(world.player.current_interactable == null and not world.player.get_node("Prompt").visible, "no prompt away from anything")
+	await _confirm_at(world, world.room.get_node("To_hallway_1f"))
+	check(world.room_id == "hallway_1f", "back to 1층 복도")
+
+	var visited := {}
+	await _explore(world, visited)
+	var ids := visited.keys()
+	ids.sort()
+	check(ids.size() == 10, "walked through every unlocked room (%d): %s" % [ids.size(), str(ids)])
+	check(not visited.has("hallway_2f") and not visited.has("stationery"), "locked rooms stay out of reach")
+	world.queue_free()
+	await _frames(2)

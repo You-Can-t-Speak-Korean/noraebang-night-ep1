@@ -1,0 +1,56 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="playground" instance=ExtResource("1")]
+room_id = "playground"
+room_title = "운동장"
+bounds_left = -14.0
+bounds_right = 14.0
+wall_color = Color(0.55, 0.52, 0.45, 1)
+
+[node name="To_gate" parent="." instance=ExtResource("2")]
+position = Vector3(-12, 0, -7.85)
+label_text = "교문"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "gate"
+target_spawn = "from_playground"
+
+[node name="from_gate" parent="." instance=ExtResource("3")]
+position = Vector3(-12, 0, 0)
+
+[node name="To_entrance" parent="." instance=ExtResource("2")]
+position = Vector3(12, 0, -7.85)
+label_text = "현관"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "entrance"
+target_spawn = "from_playground"
+
+[node name="from_entrance" parent="." instance=ExtResource("3")]
+position = Vector3(12, 0, 0)
+
+[node name="IronBar" parent="." instance=ExtResource("4")]
+position = Vector3(-5, 0, -7.4)
+size = Vector3(3.0, 1.8, 0.2)
+color = Color(0.4, 0.4, 0.45, 1)
+label_text = "철봉"
+
+[node name="Sandbox" parent="." instance=ExtResource("4")]
+position = Vector3(3, 0, -7.4)
+size = Vector3(3.0, 0.2, 2.0)
+color = Color(0.7, 0.65, 0.5, 1)
+label_text = "모래밭"
+
+[node name="Statue" parent="." instance=ExtResource("4")]
+position = Vector3(8, 0, -7.4)
+size = Vector3(0.9, 3.0, 0.9)
+color = Color(0.45, 0.5, 0.45, 1)
+label_text = "이순신 동상"

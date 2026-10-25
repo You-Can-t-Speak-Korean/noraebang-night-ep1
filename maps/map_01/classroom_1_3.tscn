@@ -1,0 +1,84 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="classroom_1_3" instance=ExtResource("1")]
+room_id = "classroom_1_3"
+room_title = "1학년 3반"
+bounds_left = -9.0
+bounds_right = 9.0
+wall_color = Color(0.55, 0.53, 0.47, 1)
+
+[node name="To_hallway_1f" parent="." instance=ExtResource("2")]
+position = Vector3(7, 0, -7.85)
+label_text = "1층 복도"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "hallway_1f"
+target_spawn = "from_classroom_1_3"
+
+[node name="from_hallway_1f" parent="." instance=ExtResource("3")]
+position = Vector3(7, 0, 0)
+
+[node name="Blackboard" parent="." instance=ExtResource("4")]
+position = Vector3(-2, 0, -7.85)
+size = Vector3(6.0, 1.6, 0.1)
+color = Color(0.15, 0.22, 0.18, 1)
+elevation = 1.2
+label_text = "칠판"
+
+[node name="Desk0" parent="." instance=ExtResource("4")]
+position = Vector3(1.5, 0, -6.2)
+size = Vector3(1.2, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+
+[node name="Desk1" parent="." instance=ExtResource("4")]
+position = Vector3(3.0, 0, -6.2)
+size = Vector3(1.2, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+
+[node name="Desk2" parent="." instance=ExtResource("4")]
+position = Vector3(4.5, 0, -6.2)
+size = Vector3(1.2, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+
+[node name="Desk3" parent="." instance=ExtResource("4")]
+position = Vector3(6.0, 0, -6.2)
+size = Vector3(1.2, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+
+[node name="DeskFront0" parent="." instance=ExtResource("4")]
+position = Vector3(-7.5, 0, -4.8)
+size = Vector3(1.2, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+
+[node name="DeskFront1" parent="." instance=ExtResource("4")]
+position = Vector3(-6.0, 0, -4.8)
+size = Vector3(1.2, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+
+[node name="Stove" parent="." instance=ExtResource("5")]
+position = Vector3(-7, 0, -7.2)
+label_text = "조개탄 난로"
+size = Vector3(1.0, 1.4, 0.8)
+color = Color(0.3, 0.3, 0.32, 1)
+placeholder_line = "(조개탄 난로다. 아직 따뜻하다.)"
+
+[node name="Lectern" parent="." instance=ExtResource("5")]
+position = Vector3(-2, 0, -7.2)
+label_text = "교탁"
+size = Vector3(1.6, 1.1, 0.8)
+color = Color(0.5, 0.38, 0.25, 1)
+placeholder_line = "(선생님의 교탁이다.)"
+
+[node name="CleaningCabinet" parent="." instance=ExtResource("5")]
+position = Vector3(3.2, 0, -7.2)
+label_text = "청소도구함"
+size = Vector3(0.9, 1.8, 0.5)
+color = Color(0.4, 0.45, 0.4, 1)
+placeholder_line = "(청소도구함이다.)"

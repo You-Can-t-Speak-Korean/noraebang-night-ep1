@@ -1,0 +1,36 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="radio_shop" instance=ExtResource("1")]
+room_id = "radio_shop"
+room_title = "전파사"
+bounds_left = -8.0
+bounds_right = 8.0
+wall_color = Color(0.45, 0.47, 0.45, 1)
+
+[node name="To_alley" parent="." instance=ExtResource("2")]
+position = Vector3(0, 0, -7.85)
+label_text = "골목길"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "alley"
+target_spawn = "from_radio_shop"
+
+[node name="from_alley" parent="." instance=ExtResource("3")]
+position = Vector3(0, 0, 0)
+
+[node name="Shelf" parent="." instance=ExtResource("4")]
+position = Vector3(-4, 0, -7.0)
+size = Vector3(3.0, 1.6, 0.6)
+color = Color(0.4, 0.38, 0.33, 1)
+
+[node name="TVBox" parent="." instance=ExtResource("4")]
+position = Vector3(4, 0, -6.5)
+size = Vector3(1.4, 1.0, 1.0)
+color = Color(0.3, 0.3, 0.35, 1)
