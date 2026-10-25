@@ -24,3 +24,11 @@ target_spawn = "from_hallway_2f"
 
 [node name="from_stairs" parent="." instance=ExtResource("3")]
 position = Vector3(-14, 0, 0)
+
+[node name="Landing" parent="." instance=ExtResource("5")]
+position = Vector3(-11.0, 0, -7.2)
+label_text = "2층 층계참"
+size = Vector3(1.2, 0.9, 0.6)
+color = Color(0.4, 0.4, 0.44, 1)
+spot_id = "landing_2f"
+placeholder_line = "(placeholder)"

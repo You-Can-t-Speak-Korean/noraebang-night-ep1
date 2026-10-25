@@ -6,6 +6,8 @@
 # an unknown card id, one for end_fight with a bad outcome, one for retry_fight
 # outside a fight, and push_warnings for damage/heal/add_nunchi/spend_nunchi with
 # values <= 0.
+# The world test with a save from a newer version adds one more push_error
+# ("World: could not load the save ...").
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends SceneTree
@@ -26,12 +28,22 @@ func _initialize() -> void:
 	_test_resets()
 	_test_saves()
 	_test_helpers()
+	_test_map_day()
+	_test_dealer_data()
+	_test_dealer()
+	_test_reload_sim()
+	_test_hud_pure()
+	_test_launch_args()
 	_test_project()
 	await _test_stage()
 	_test_movement_pure()
 	await _test_player()
 	_test_map_graph()
 	await _test_map_walk()
+	await _test_world_launch()
+	await _test_world_search()
+	await _test_world_full_run()
+	_clean_world_saves()
 	print("\n%d checks, %d failed" % [checks, failures])
 	quit(1 if failures > 0 else 0)
 
@@ -224,7 +236,7 @@ func _test_resets() -> void:
 	print("Resets")
 	var gs := make_gs()
 	var defaults: Dictionary = gs._default_state()
-	check(defaults.size() == 17, "default state has all 17 saved fields")
+	check(defaults.size() == 18, "default state has all 18 saved fields")
 	_dirty(gs)
 	var died := watch(gs, ["state_reset"])
 	gs.death_reset()
@@ -669,10 +681,7 @@ func _explore(world: Node, visited: Dictionary) -> void:
 
 func _test_map_walk() -> void:
 	print("Map walk (simulated input)")
-	var world: Node = load("res://scenes/map_01.tscn").instantiate()
-	root.add_child(world)
-	world.fade_time = 0.0
-	await _frames(3)
+	var world: Node = await _start_world()
 	check(world.room_id == "hallway_1f", "starts in 1층 복도")
 	check(world.player.position.x == -3.0, "starts at the 'start' spawn")
 
@@ -693,8 +702,9 @@ func _test_map_walk() -> void:
 	await _frames(3)
 	check(world.player.current_interactable == stove, "prompt appears at the stove")
 	check(world.player.get_node("Prompt").visible and world.player.get_node("Prompt").text == "Enter", "prompt says Enter")
+	world.layout = {}
 	await _press("confirm")
-	check(world._text_open and world._text_label.text == stove.placeholder_line and world.player.movement_locked, "stove shows its placeholder line")
+	check(world._text_open and world._text_label.text == world.spawn_config["lines"]["empty"] and world.player.movement_locked, "stove (a search spot) shows its search result")
 	check(not world.player.get_node("Prompt").visible, "prompt hidden while text is open")
 	await _press("confirm")
 	check(not world._text_open and not world.player.movement_locked, "text closes, movement unlocked")
@@ -712,3 +722,491 @@ func _test_map_walk() -> void:
 	check(not visited.has("hallway_2f") and not visited.has("stationery"), "locked rooms stay out of reach")
 	world.queue_free()
 	await _frames(2)
+
+
+# ── Step 2b: finding things ────────────────────────────────────────────
+
+const DealerScript := preload("res://scripts/spawn_dealer.gd")
+const HeartsScript := preload("res://scripts/hearts_display.gd")
+const WORLD_SAVE_DIR := "user://test_world_saves"
+const MAP_KEY := "map_01:sat"
+
+
+func _gs() -> Node:
+	return root.get_node("GameState")
+
+
+func _clean_world_saves() -> void:
+	var dir := DirAccess.open(WORLD_SAVE_DIR)
+	if dir:
+		for f in dir.get_files():
+			dir.remove(f)
+		DirAccess.remove_absolute(WORLD_SAVE_DIR)
+
+
+## A fresh map world on the autoload GameState, saving into the test folder only.
+func _start_world(keep_save := false) -> Node:
+	if not keep_save:
+		_clean_world_saves()
+	_gs().save_path = WORLD_SAVE_DIR + "/save.json"
+	var world: Node = load("res://scenes/map_01.tscn").instantiate()
+	root.add_child(world)
+	world.fade_time = 0.0
+	await _frames(3)
+	return world
+
+
+func _stop_world(world: Node) -> void:
+	world.queue_free()
+	await _frames(2)
+
+
+func _kind_counts(layout: Dictionary) -> Dictionary:
+	var c := {"ddeok": 0, "note": 0, "health": 0, "trap": 0}
+	for id in layout:
+		c[layout[id]["kind"]] += 1
+	return c
+
+
+func _spot_node(room: Node, spot_id: String) -> Node3D:
+	for it in room.find_children("*", "Area3D", true, false):
+		if it.get("spot_id") == spot_id:
+			return it
+	return null
+
+
+## Walks the player to a spot (loading its room directly) and presses Enter.
+func _search_spot(world: Node, config: Dictionary, spot_id: String) -> bool:
+	var room_id: String = config["spots"][spot_id]["room"]
+	if world.room_id != room_id:
+		world._load_room(room_id, "")
+	var node := _spot_node(world.room, spot_id)
+	world.player.place(node.position.x, 0)
+	await _frames(3)
+	var reachable: bool = world.player.current_interactable == node
+	await _press("confirm")
+	return reachable
+
+
+func _close_text(world: Node) -> void:
+	if world._text_open:
+		await _press("confirm")
+
+
+func _test_map_day() -> void:
+	print("map_day")
+	var gs := make_gs()
+	check(gs.map_day == "sat", "map_day defaults to sat")
+	gs.map_day = "mon"
+	gs.death_reset()
+	check(gs.map_day == "sat", "death_reset puts the day back to sat")
+	gs.map_day = "mon"
+	_clean_saves()
+	gs.save_path = SAVE_DIR + "/day.json"
+	gs.save_game()
+	var other := make_gs()
+	other.save_path = gs.save_path
+	other.load_game()
+	check(other.map_day == "mon", "map_day survives a save round trip")
+	check(gs._normalize({"map_day": 7}).map_day == "sat" and gs._normalize({"map_day": ""}).map_day == "sat", "bad map_day falls back to sat")
+	check(gs._normalize({}).map_day == "sat", "missing map_day (older save) loads as sat")
+	_clean_saves()
+	gs.free()
+	other.free()
+
+
+func _test_dealer_data() -> void:
+	print("Spawn data")
+	var cfg: Dictionary = DealerScript.load_config()
+	check(not cfg.is_empty(), "spawn config loads")
+	var spots: Dictionary = cfg["spots"]
+	check(spots.size() == 12, "12 spots")
+	check(cfg["budgets"].keys().size() == 2 and cfg["budgets"].has("sat") and cfg["budgets"].has("mon"), "budgets for sat and mon")
+	for day in ["sat", "mon"]:
+		var b: Dictionary = cfg["budgets"][day]
+		check(b["ddeok"] == 2 and b["ddeok_amount"] == 1 and b["extras"] == 1 and b["traps"] == 2, "%s budget: 2 DDEOK (1 each), 1 extra, 2 traps" % day)
+		check(b["ddeok"] + b["extras"] == 3 and b["traps"] == 2, "%s: 3 rewards to 2 traps (6:4)" % day)
+	check(cfg["extras"]["note"]["weight"] == 2 and cfg["extras"]["band_aid"]["weight"] == 2 and cfg["extras"]["red_medicine"]["weight"] == 1, "extra weights 2 / 2 / 1")
+	check(cfg["extras"]["band_aid"]["heal"] == 1 and cfg["extras"]["red_medicine"]["heal"] == 2, "반창고 heals 1 half, 빨간약 heals 2")
+	check(cfg["notes"].size() == 3, "3 notes")
+	var all_placeholder := true
+	for id in cfg["notes"]:
+		all_placeholder = all_placeholder and cfg["notes"][id].contains("[placeholder]")
+	for k in cfg["lines"]:
+		all_placeholder = all_placeholder and cfg["lines"][k].contains("[placeholder]")
+	check(all_placeholder, "every note and narration line is marked [placeholder]")
+	var half_spots := []
+	var every_trap := true
+	for id in spots:
+		var spot: Dictionary = spots[id]
+		every_trap = every_trap and spot.has("trap") and int(spot["trap"]["damage"]) in [1, 2] and int(spot["trap"]["weight"]) >= 1
+		if spot["trap"]["damage"] == 1:
+			half_spots.append(id)
+	check(every_trap, "every spot has a trap with damage 1 or 2 halves and a weight")
+	half_spots.sort()
+	check(half_spots == ["back_chair", "cabinet", "lectern", "shoe_rack"], "½-heart traps: 교탁, chair, 청소도구함, 신발장 (%s)" % str(half_spots))
+	check(spots["landing_2f"]["days"] == ["mon"], "2층 landing is Monday only")
+	var sat_spots := spots.keys().filter(func(id): return spots[id]["days"].has("sat"))
+	check(sat_spots.size() == 11, "11 spots are eligible on Saturday")
+	# Every spot has exactly one gray prop in the named room, and no other room claims it.
+	var found := {}
+	var rooms: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))["rooms"]
+	for room_id in rooms:
+		var room: Node = load(rooms[room_id]).instantiate()
+		for it in room.find_children("*", "Area3D", true, false):
+			var sid = it.get("spot_id")
+			if typeof(sid) == TYPE_STRING and sid != "":
+				found[sid] = found.get(sid, 0) + 1
+				check(spots.has(sid) and spots[sid]["room"] == room_id, "spot '%s' sits in its room (%s)" % [sid, room_id])
+		room.free()
+	var once := true
+	for id in spots:
+		once = once and found.get(id, 0) == 1
+	check(once and found.size() == 12, "each of the 12 spots has exactly one prop")
+
+
+func _test_dealer() -> void:
+	print("Dealer")
+	var cfg: Dictionary = DealerScript.load_config()
+	var spots: Dictionary = cfg["spots"]
+	var counts_ok := {"sat": true, "mon": true}
+	var eligible_ok := true
+	var no_landing_sat := true
+	var deterministic := true
+	var layouts := {}
+	var half := 0
+	var traps := 0
+	var seeds := 2000
+	for day in ["sat", "mon"]:
+		var day_budget: Dictionary = cfg["budgets"][day]
+		for s in seeds:
+			var l: Dictionary = DealerScript.deal(spots, day_budget, cfg["extras"], s, [], [], day)
+			var c := _kind_counts(l)
+			counts_ok[day] = counts_ok[day] and c["ddeok"] == 2 and c["note"] + c["health"] == 1 and c["trap"] == 2 and l.size() == 5
+			for id in l:
+				eligible_ok = eligible_ok and spots.has(id) and spots[id]["days"].has(day)
+				if l[id]["kind"] == "trap":
+					traps += 1
+					half += 1 if l[id]["damage"] == 1 else 0
+					# The trap dealt is the spot's own.
+					eligible_ok = eligible_ok and l[id]["name"] == spots[id]["trap"]["name"]
+				if l[id]["kind"] == "ddeok":
+					eligible_ok = eligible_ok and l[id]["amount"] == 1
+			if day == "sat":
+				no_landing_sat = no_landing_sat and not l.has("landing_2f")
+			if s < 200:
+				deterministic = deterministic and same(l, DealerScript.deal(spots, day_budget, cfg["extras"], s, [], [], day))
+				if day == "sat":
+					layouts[JSON.stringify(l)] = true
+	check(counts_ok["sat"] and counts_ok["mon"], "budget counts are exact over %d seeds per day (2 DDEOK, 1 extra, 2 traps, 5 spots)" % seeds)
+	check(eligible_ok, "only eligible spots are dealt, with their own trap")
+	check(no_landing_sat, "the 2층 landing is never dealt on Saturday")
+	check(deterministic, "the same seed gives the same layout")
+	check(layouts.size() >= 190, "different seeds give different layouts (%d distinct of 200)" % layouts.size())
+	var share := float(half) / float(traps)
+	check(share > 0.76 and share < 0.84, "about 80%% of dealt traps are ½-heart (%.3f of %d)" % [share, traps])
+
+	# Owned notes are never dealt; with none left a health item takes the slot.
+	var b: Dictionary = cfg["budgets"]["sat"]
+	var leaked := false
+	var notes_dealt := 0
+	var all_owned_ok := true
+	for s in 1500:
+		var l: Dictionary = DealerScript.deal(spots, b, cfg["extras"], s, [], ["note_1", "note_2"], "sat")
+		for id in l:
+			if l[id]["kind"] == "note":
+				notes_dealt += 1
+				leaked = leaked or l[id]["note_id"] != "note_3"
+		var all_l: Dictionary = DealerScript.deal(spots, b, cfg["extras"], s, [], ["note_1", "note_2", "note_3"], "sat")
+		var c := _kind_counts(all_l)
+		all_owned_ok = all_owned_ok and c["note"] == 0 and c["health"] == 1 and c["ddeok"] == 2 and c["trap"] == 2
+	check(notes_dealt > 100 and not leaked, "owned notes are never dealt; only note_3 appears (%d dealt)" % notes_dealt)
+	check(all_owned_ok, "with every note owned, the extra becomes a health item")
+
+	# Entries in `collected` shrink the pool and the budget (empties only shrink the pool).
+	var prior := ["stove:ddeok", "lectern:trap", "office:empty"]
+	var ok := true
+	for s in 500:
+		var l: Dictionary = DealerScript.deal(spots, b, cfg["extras"], s, prior, [], "sat")
+		var c := _kind_counts(l)
+		ok = ok and c["ddeok"] == 1 and c["trap"] == 1 and c["note"] + c["health"] == 1
+		ok = ok and not l.has("stove") and not l.has("lectern") and not l.has("office")
+	check(ok, "remaining budget = budget - taken; searched spots (even empty ones) are not dealt again")
+	var spent := ["stove:ddeok", "office:ddeok", "lectern:trap", "cabinet:trap", "shoe_rack:note"]
+	check(DealerScript.deal(spots, b, cfg["extras"], 1, spent, [], "sat").is_empty(), "a spent budget deals nothing")
+
+
+func _test_reload_sim() -> void:
+	print("Reload simulation")
+	var cfg: Dictionary = DealerScript.load_config()
+	var spots: Dictionary = cfg["spots"]
+	var b: Dictionary = cfg["budgets"]["sat"]
+	var eligible: Array = spots.keys().filter(func(id): return spots[id]["days"].has("sat"))
+	eligible.sort()
+	_clean_saves()
+	var stays := true
+	var adds_up := true
+	var changed := 0
+	var trials := 60
+	for t in trials:
+		var gs := make_gs()
+		gs.save_path = SAVE_DIR + "/reload.json"
+		gs.spawn_seed = 100 + t
+		var first: Dictionary = DealerScript.deal(spots, b, cfg["extras"], gs.spawn_seed, [], gs.notes, "sat")
+		var taken_ids: Array = eligible.slice(0, 3 + t % 6)
+		for id in taken_ids:
+			var entry: Dictionary = first.get(id, {"kind": "empty"})
+			gs.mark_collected(MAP_KEY, "%s:%s" % [id, entry["kind"]])
+			if entry["kind"] == "note":
+				gs.add_note(entry["note_id"])
+		gs.save_game()
+		var loaded := make_gs()
+		loaded.save_path = gs.save_path
+		loaded.load_game()
+		loaded.spawn_seed = 9000 + t
+		var second: Dictionary = DealerScript.deal(spots, b, cfg["extras"], loaded.spawn_seed, loaded.collected.get(MAP_KEY, []), loaded.notes, "sat")
+		for id in taken_ids:
+			stays = stays and not second.has(id)
+		# taken + remaining = budget, per kind
+		var taken_counts := {"ddeok": 0, "extra": 0, "trap": 0}
+		for entry in loaded.collected.get(MAP_KEY, []):
+			match str(entry).split(":")[1]:
+				"ddeok":
+					taken_counts["ddeok"] += 1
+				"note", "health":
+					taken_counts["extra"] += 1
+				"trap":
+					taken_counts["trap"] += 1
+		var left := _kind_counts(second)
+		adds_up = adds_up and taken_counts["ddeok"] + left["ddeok"] == b["ddeok"] \
+				and taken_counts["extra"] + left["note"] + left["health"] == b["extras"] \
+				and taken_counts["trap"] + left["trap"] == b["traps"]
+		var first_rest := first.duplicate()
+		for id in taken_ids:
+			first_rest.erase(id)
+		if not same(first_rest, second):
+			changed += 1
+		gs.free()
+		loaded.free()
+	_clean_saves()
+	check(stays, "collected spots are never dealt again after a reload")
+	check(adds_up, "taken + remaining equals the budget after a reload")
+	check(changed >= trials * 0.8, "uncollected positions change with the new seed (%d of %d)" % [changed, trials])
+
+
+func _test_hud_pure() -> void:
+	print("Hearts shapes (pure)")
+	var WorldScript = load("res://scripts/world.gd")  # runtime load: needs the GameState autoload
+	check(HeartsScript.heart_count(10) == 5 and HeartsScript.heart_count(9) == 5, "10 halves draw 5 hearts")
+	var states := []
+	for i in 5:
+		states.append(HeartsScript.heart_state(i, 7))
+	check(states == [2, 2, 2, 1, 0], "7 halves = 3 full, 1 half, 1 empty (%s)" % str(states))
+	var full := []
+	var none := []
+	for i in 5:
+		full.append(HeartsScript.heart_state(i, 10))
+		none.append(HeartsScript.heart_state(i, 0))
+	check(full == [2, 2, 2, 2, 2] and none == [0, 0, 0, 0, 0], "10 halves all full, 0 halves all empty")
+	check(HeartsScript.heart_state(0, 1) == 1 and HeartsScript.heart_state(1, 1) == 0, "1 half = half of the first heart")
+	var poly: PackedVector2Array = HeartsScript.heart_polygon(52.0)
+	var lo := poly[0]
+	var hi := poly[0]
+	for p in poly:
+		lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.y))
+		hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.y))
+	check(poly.size() >= 24 and lo.is_equal_approx(Vector2.ZERO) and hi.is_equal_approx(Vector2(52, 52)), "heart polygon fills its 52 px box")
+	check(WorldScript.hearts_text(1) == "½" and WorldScript.hearts_text(2) == "1" and WorldScript.hearts_text(3) == "1½", "heart amounts read ½ / 1 / 1½")
+
+
+func _test_launch_args() -> void:
+	print("Launch args")
+	var WorldScript = load("res://scripts/world.gd")
+	var none: Dictionary = WorldScript.parse_launch_args(PackedStringArray([]))
+	check(not none["new_game"] and none["seed"] == -1 and not none["capture_map"] and not none["capture_hud"], "no args: load the save, random seed")
+	var a: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--new-game", "--seed", "42"]))
+	check(a["new_game"] and a["seed"] == 42, "--new-game and --seed N")
+	var bad: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--seed", "abc"]))
+	check(bad["seed"] == -1, "a bad --seed is ignored")
+	var last: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--seed"]))
+	check(last["seed"] == -1, "--seed with no value is ignored")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--capture-hud"]))["capture_hud"], "--capture-hud recognised")
+
+
+func _test_world_launch() -> void:
+	print("World launch and saves")
+	var gs := _gs()
+	var world: Node = await _start_world()
+	check(world.room_id == "hallway_1f" and gs.progress == "scene_00", "no save: new game in the start room")
+	check(world.layout.size() == 5, "a layout of 5 finds was dealt on launch")
+	check(world.hud != null and world.hud.get_parent() == world, "HUD is part of the world")
+
+	# Forced seed: same seed, same layout.
+	world._forced_seed = 777
+	world._start_game(true)
+	var l1: Dictionary = world.layout.duplicate(true)
+	world._start_game(true)
+	check(gs.spawn_seed == 777 and same(l1, world.layout), "--seed forces the spawn seed and so the layout")
+	world._forced_seed = -1
+
+	# Autosave on a room change; the save holds the state, and a relaunch starts in the start room.
+	gs.add_ddeok(3)
+	gs.mark_collected(MAP_KEY, "stove:ddeok")
+	check(not FileAccess.file_exists(gs.save_path), "nothing is saved before the first room change")
+	await _confirm_at(world, world.room.get_node("To_classroom_1_3"))
+	check(world.room_id == "classroom_1_3" and FileAccess.file_exists(gs.save_path), "a room change autosaves")
+	var other := make_gs()
+	other.save_path = gs.save_path
+	check(other.load_game() == OK and other.ddeok == 3 and other.is_collected(MAP_KEY, "stove:ddeok"), "save round trip across a room change")
+	other.free()
+	await _stop_world(world)
+
+	var again: Node = await _start_world(true)
+	check(again.room_id == "hallway_1f" and gs.ddeok == 3, "relaunch: state restored, but in the start room")
+	check(not again.layout.has("stove"), "relaunch: the collected spot is not dealt again")
+	var left := _kind_counts(again.layout)
+	check(left["ddeok"] == 1 and left["trap"] == 2 and left["note"] + left["health"] == 1, "relaunch: taken + remaining = budget")
+	# --new-game ignores the save.
+	again._start_game(true)
+	check(gs.ddeok == 0 and gs.collected.is_empty(), "--new-game ignores the save")
+	await _stop_world(again)
+
+	# A save from a newer version is never overwritten.
+	_clean_world_saves()
+	DirAccess.make_dir_recursive_absolute(WORLD_SAVE_DIR)
+	var future := JSON.stringify({"game": "noraebang-night", "save_version": 99, "state_version": "9.9", "state": {"ddeok": 5}})
+	_write(WORLD_SAVE_DIR + "/save.json", future)
+	var w3: Node = await _start_world(true)
+	check(not w3.autosave_enabled and gs.ddeok == 0, "newer save: new game in memory, autosave off")
+	await _confirm_at(w3, w3.room.get_node("To_classroom_1_3"))
+	check(_read(WORLD_SAVE_DIR + "/save.json") == future, "newer save is left untouched by a room change")
+	await _stop_world(w3)
+
+
+func _test_world_search() -> void:
+	print("Searching")
+	var gs := _gs()
+	var cfg: Dictionary = DealerScript.load_config()
+	var world: Node = await _start_world()
+	var lines: Dictionary = cfg["lines"]
+	world.layout = {
+		"stove": {"kind": "ddeok", "amount": 1},
+		"lectern": {"kind": "trap", "name": "쥐덫", "damage": 1},
+		"cabinet": {"kind": "health", "item": "band_aid", "name": "반창고", "heal": 1},
+		"back_chair": {"kind": "note", "note_id": "note_2"},
+		"shoe_rack": {"kind": "health", "item": "red_medicine", "name": "빨간약", "heal": 2},
+	}
+	gs.damage(4)
+	check(gs.hearts_halves == 6, "start the search test at 6 halves")
+
+	var ok := await _search_spot(world, cfg, "stove")
+	check(ok and world._text_open and world.player.movement_locked, "Enter on a spot opens the textbox and locks movement")
+	check(gs.ddeok == 1 and world._text_label.text.contains("1 DDEOK") and world._text_label.text.contains("[placeholder]"), "DDEOK goes to GameState")
+	check(gs.is_collected(MAP_KEY, "stove:ddeok"), "the find is recorded as stove:ddeok")
+	await _close_text(world)
+	await _search_spot(world, cfg, "stove")
+	check(world._text_label.text == lines["searched"] and gs.ddeok == 1, "a spot searched twice gives nothing the second time")
+	check(gs.collected[MAP_KEY].size() == 1, "the second search records nothing")
+	await _close_text(world)
+
+	await _search_spot(world, cfg, "back_chair")
+	check(gs.has_note("note_2") and world._text_label.text.contains(cfg["notes"]["note_2"]), "a note goes to GameState and its text is shown")
+	await _close_text(world)
+	await _search_spot(world, cfg, "cabinet")
+	check(gs.hearts_halves == 7 and world._text_label.text.contains("반창고") and world._text_label.text.contains("½"), "반창고 heals 1 half at once")
+	await _close_text(world)
+	await _search_spot(world, cfg, "shoe_rack")
+	check(gs.hearts_halves == 9 and world._text_label.text.contains("빨간약"), "빨간약 heals 2 halves at once")
+	await _close_text(world)
+	var before_flash: int = world.flashes
+	await _search_spot(world, cfg, "lectern")
+	check(gs.hearts_halves == 8 and world._text_label.text.contains("쥐덫") and world._text_label.text.contains("½"), "a ½-heart trap costs 1 half")
+	check(world.flashes == before_flash + 1 and world._flash_rect.color.a > 0.0, "a trap flashes the screen red")
+	await _close_text(world)
+
+	# Nothing dealt: empty, still once only.
+	await _search_spot(world, cfg, "restroom")
+	check(world._text_label.text == lines["empty"] and gs.is_collected(MAP_KEY, "restroom:empty"), "an undealt spot is empty and recorded")
+	await _close_text(world)
+
+	# Hearts clamp at the maximum.
+	gs.hearts_halves = gs.hearts_max_halves
+	world.layout = {"sandbox": {"kind": "health", "item": "red_medicine", "name": "빨간약", "heal": 2}}
+	await _search_spot(world, cfg, "sandbox")
+	check(gs.hearts_halves == gs.hearts_max_halves, "healing clamps at full hearts")
+	await _close_text(world)
+
+	# A 1-heart trap.
+	world.layout = {"iron_bar": {"kind": "trap", "name": "녹슨 철봉", "damage": 2}}
+	await _search_spot(world, cfg, "iron_bar")
+	check(gs.hearts_halves == gs.hearts_max_halves - 2 and world._text_label.text.contains("1 heart"), "a 1-heart trap costs 2 halves")
+	await _close_text(world)
+
+	# The HUD follows GameState.
+	await _frames(1)
+	check(world.hud.hearts.halves == gs.hearts_halves and world.hud.hearts.max_halves == gs.hearts_max_halves, "HUD hearts match GameState (%d halves)" % gs.hearts_halves)
+	check(world.hud.ddeok_label.text == "DDEOK %d" % gs.ddeok and world.hud.nunchi_label.text == "눈치 %d/7" % gs.nunchi, "HUD DDEOK and 눈치 labels match")
+	check(world.hud.secrets_label.text == "비밀 7/7", "HUD shows 비밀 7/7 at the start")
+	gs.lose_secret("pride", "eunju")
+	gs.add_nunchi(2)
+	gs.damage(1)
+	check(world.hud.secrets_label.text == "비밀 6/7" and world.hud.nunchi_label.text == "눈치 2/7" and world.hud.hearts.halves == gs.hearts_halves, "HUD updates on signals")
+
+	# Death: game over, then Enter restarts in 1학년 3반 with a fresh GameState.
+	gs.hearts_halves = 1
+	world.layout = {"statue": {"kind": "trap", "name": "이순신 동상의 칼", "damage": 2}}
+	await _search_spot(world, cfg, "statue")
+	check(world._game_over and world._game_over_layer.visible and world.player.movement_locked, "0 hearts: GAME OVER screen, movement locked")
+	check(gs.hearts_halves == 0 and world.hud.hearts.halves == 0, "the HUD shows empty hearts on the game-over screen")
+	await _press("confirm")
+	check(not world._game_over and not world._game_over_layer.visible and not world._text_open, "Enter leaves the game-over screen")
+	check(world.room_id == "classroom_1_3" and is_equal_approx(world.player.position.x, 7.0), "death restarts in 1학년 3반 at its door")
+	check(gs.hearts_halves == gs.hearts_max_halves and gs.ddeok == 0 and gs.notes.is_empty() and gs.collected.is_empty() and gs.progress == "scene_01" and gs.map_day == "sat", "GameState is fresh after the death reset")
+	check(not world.player.movement_locked, "movement is unlocked after the restart")
+	check(world.layout.size() == 5 and gs.secrets_held.size() == gs.hand.size(), "a new layout is dealt and the hand is restored")
+	var saved := make_gs()
+	saved.save_path = gs.save_path
+	check(saved.load_game() == OK and saved.hearts_halves == saved.hearts_max_halves and saved.collected.is_empty(), "the death reset is autosaved")
+	saved.free()
+	check(world.hud.hearts.halves == gs.hearts_max_halves and world.hud.secrets_label.text == "비밀 7/7", "HUD shows the fresh state")
+	await _stop_world(world)
+
+
+## Searches all the day's spots through real key presses and checks the budget.
+func _test_world_full_run() -> void:
+	print("Full run through the spots")
+	var gs := _gs()
+	var cfg: Dictionary = DealerScript.load_config()
+	var spots: Dictionary = cfg["spots"]
+	for day in ["sat", "mon"]:
+		var world: Node = await _start_world()
+		gs.map_day = day
+		gs.spawn_seed = 31337
+		world.deal_layout()
+		var layout: Dictionary = world.layout.duplicate(true)
+		var ids: Array = spots.keys().filter(func(id): return spots[id]["days"].has(day))
+		ids.sort()
+		var reachable := true
+		var expected_hearts: int = gs.hearts_halves
+		for id in ids:
+			var reached: bool = await _search_spot(world, cfg, id)
+			reachable = reachable and reached
+			await _close_text(world)
+			var entry: Dictionary = layout.get(id, {"kind": "empty"})
+			if entry["kind"] == "trap":
+				expected_hearts = maxi(expected_hearts - int(entry["damage"]), 1)
+			elif entry["kind"] == "health":
+				expected_hearts = mini(expected_hearts + int(entry["heal"]), gs.hearts_max_halves)
+		check(reachable, "%s: all %d spots can be reached and searched with Enter" % [day, ids.size()])
+		var tally := {"ddeok": 0, "note": 0, "health": 0, "trap": 0, "empty": 0}
+		for entry in gs.collected["map_01:" + day]:
+			tally[str(entry).split(":")[1]] += 1
+		check(tally["ddeok"] == 2 and tally["note"] + tally["health"] == 1 and tally["trap"] == 2 and tally["empty"] == ids.size() - 5, "%s: the run found exactly the day's budget %s" % [day, str(tally)])
+		check(gs.ddeok == 2, "%s: 2 DDEOK in GameState" % day)
+		check(gs.notes.size() == tally["note"], "%s: notes match the finds" % day)
+		check(gs.hearts_halves == expected_hearts, "%s: hearts match the traps and health items found (%d halves)" % [day, gs.hearts_halves])
+		check(gs.collected["map_01:" + day].size() == ids.size(), "%s: every spot recorded once" % day)
+		if day == "mon":
+			check(ids.has("landing_2f") and gs.is_collected("map_01:mon", "landing_2f:" + layout.get("landing_2f", {"kind": "empty"})["kind"]), "mon: the 2층 landing was searched")
+		await _stop_world(world)
+	_clean_world_saves()

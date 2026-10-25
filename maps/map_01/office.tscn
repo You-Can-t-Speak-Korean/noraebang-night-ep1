@@ -34,3 +34,11 @@ color = Color(0.45, 0.4, 0.35, 1)
 position = Vector3(4, 0, -5.5)
 size = Vector3(2.0, 0.9, 1.0)
 color = Color(0.45, 0.4, 0.35, 1)
+
+[node name="Cabinet" parent="." instance=ExtResource("5")]
+position = Vector3(3.0, 0, -7.3)
+label_text = "서류함"
+size = Vector3(1.2, 1.6, 0.5)
+color = Color(0.4, 0.38, 0.34, 1)
+spot_id = "office"
+placeholder_line = "(placeholder)"

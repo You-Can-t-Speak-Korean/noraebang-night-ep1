@@ -35,7 +35,10 @@ position = Vector3(-1.5, 0, -6.5)
 size = Vector3(1.4, 2.2, 0.15)
 color = Color(0.4, 0.45, 0.5, 1)
 
-[node name="Stall3" parent="." instance=ExtResource("4")]
+[node name="Stall3" parent="." instance=ExtResource("5")]
 position = Vector3(3.5, 0, -6.5)
 size = Vector3(1.4, 2.2, 0.15)
 color = Color(0.4, 0.45, 0.5, 1)
+label_text = "세 번째 칸"
+spot_id = "restroom"
+placeholder_line = "(placeholder)"

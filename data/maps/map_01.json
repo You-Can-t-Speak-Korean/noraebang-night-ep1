@@ -2,6 +2,8 @@
   "title": "Map 01 — 국민학교 (1979)",
   "start_room": "hallway_1f",
   "start_spawn": "start",
+  "death_room": "classroom_1_3",
+  "death_spawn": "from_hallway_1f",
   "rooms": {
     "gate": "res://maps/map_01/gate.tscn",
     "playground": "res://maps/map_01/playground.tscn",

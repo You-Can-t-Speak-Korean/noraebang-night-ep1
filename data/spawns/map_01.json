@@ -1,0 +1,35 @@
+{
+	"map": "map_01",
+	"_comment": "Damage is in halves (1 = half a heart, 2 = a whole heart). Trap weight decides how often a spot's trap is dealt; the half-heart traps carry most of the weight so about 80% of dealt traps cost half a heart.",
+	"budgets": {
+		"sat": {"ddeok": 2, "ddeok_amount": 1, "extras": 1, "traps": 2},
+		"mon": {"ddeok": 2, "ddeok_amount": 1, "extras": 1, "traps": 2}
+	},
+	"extras": {
+		"note": {"kind": "note", "weight": 2},
+		"band_aid": {"kind": "health", "weight": 2, "name": "반창고", "heal": 1},
+		"red_medicine": {"kind": "health", "weight": 1, "name": "빨간약", "heal": 2}
+	},
+	"lines": {
+		"ddeok": "Found {amount} DDEOK. [placeholder]",
+		"note": "Found a note. It reads: {text} [placeholder]",
+		"health": "Found a {name}. Restores {heal} heart. [placeholder]",
+		"trap": "{name}! You lose {damage} heart. [placeholder]",
+		"empty": "Nothing here. [placeholder]",
+		"searched": "You already searched here. [placeholder]"
+	},
+	"spots": {
+		"stove": {"room": "classroom_1_3", "days": ["sat", "mon"], "trap": {"name": "뜨거운 조개탄", "damage": 2, "weight": 1}},
+		"cabinet": {"room": "classroom_1_3", "days": ["sat", "mon"], "trap": {"name": "대걸레 자루", "damage": 1, "weight": 8}},
+		"lectern": {"room": "classroom_1_3", "days": ["sat", "mon"], "trap": {"name": "쥐덫", "damage": 1, "weight": 8}},
+		"back_chair": {"room": "classroom_1_3", "days": ["sat", "mon"], "trap": {"name": "압정", "damage": 1, "weight": 8}},
+		"shoe_rack": {"room": "entrance", "days": ["sat", "mon"], "trap": {"name": "쥐", "damage": 1, "weight": 8}},
+		"sandbox": {"room": "playground", "days": ["sat", "mon"], "trap": {"name": "깨진 사이다 병", "damage": 2, "weight": 1}},
+		"iron_bar": {"room": "playground", "days": ["sat", "mon"], "trap": {"name": "녹슨 철봉", "damage": 2, "weight": 1}},
+		"statue": {"room": "playground", "days": ["sat", "mon"], "trap": {"name": "이순신 동상의 칼", "damage": 2, "weight": 1}},
+		"office": {"room": "office", "days": ["sat", "mon"], "trap": {"name": "사랑의 매", "damage": 2, "weight": 1}},
+		"restroom": {"room": "restroom", "days": ["sat", "mon"], "trap": {"name": "화장실 귀신", "damage": 2, "weight": 1}},
+		"behind_radio_shop": {"room": "alley", "days": ["sat", "mon"], "trap": {"name": "브라운관", "damage": 2, "weight": 1}},
+		"landing_2f": {"room": "hallway_2f", "days": ["mon"], "trap": {"name": "깨진 유리창", "damage": 2, "weight": 1}}
+	}
+}

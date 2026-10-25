@@ -37,20 +37,26 @@ target_spawn = "from_playground"
 [node name="from_entrance" parent="." instance=ExtResource("3")]
 position = Vector3(12, 0, 0)
 
-[node name="IronBar" parent="." instance=ExtResource("4")]
+[node name="IronBar" parent="." instance=ExtResource("5")]
 position = Vector3(-5, 0, -7.4)
 size = Vector3(3.0, 1.8, 0.2)
 color = Color(0.4, 0.4, 0.45, 1)
 label_text = "철봉"
+spot_id = "iron_bar"
+placeholder_line = "(placeholder)"
 
-[node name="Sandbox" parent="." instance=ExtResource("4")]
+[node name="Sandbox" parent="." instance=ExtResource("5")]
 position = Vector3(3, 0, -7.4)
-size = Vector3(3.0, 0.2, 2.0)
+size = Vector3(3.0, 0.5, 1.5)
 color = Color(0.7, 0.65, 0.5, 1)
 label_text = "모래밭"
+spot_id = "sandbox"
+placeholder_line = "(placeholder)"
 
-[node name="Statue" parent="." instance=ExtResource("4")]
+[node name="Statue" parent="." instance=ExtResource("5")]
 position = Vector3(8, 0, -7.4)
 size = Vector3(0.9, 3.0, 0.9)
 color = Color(0.45, 0.5, 0.45, 1)
 label_text = "이순신 동상"
+spot_id = "statue"
+placeholder_line = "(placeholder)"

@@ -27,6 +27,7 @@ const TUNING_PATH := "res://data/config/tuning.json"
 const HAND_PATH := "res://data/secrets/act1_hand.json"
 const LEAKS_PATH := "res://data/secrets/act1_leaks.json"
 
+const DEFAULT_MAP_DAY := "sat"
 const DEFAULT_HEARTS_MAX_HALVES := 10
 const DEFAULT_NUNCHI_CAP := 7
 const DEFAULT_OVERFLOW_RATE := 1
@@ -49,7 +50,9 @@ var ddeok: int = 0
 var secrets_held: Array[String] = []
 var secrets_known_by: Dictionary = {}  # card -> Array[String] of person ids
 var spawn_seed: int = 0
-var collected: Dictionary = {}         # "map-day" -> Array[String] of ids
+var map_day: String = DEFAULT_MAP_DAY  # "sat" | "mon"; picks the day's spot budget
+## "<map>:<day>" -> Array[String] of "<spot_id>:<kind>" (kind: ddeok, note, health, trap, empty).
+var collected: Dictionary = {}
 var notes: Array[String] = []
 var talked: Array[String] = []
 var owned_items: Array[String] = []
@@ -279,15 +282,15 @@ func unlock_codex(id: String) -> void:
 		codex.append(id)
 
 
-func mark_collected(map_day: String, id: String) -> void:
-	if not collected.has(map_day):
-		collected[map_day] = _str_array([])
-	if not collected[map_day].has(id):
-		collected[map_day].append(id)
+func mark_collected(map_key: String, id: String) -> void:
+	if not collected.has(map_key):
+		collected[map_key] = _str_array([])
+	if not collected[map_key].has(id):
+		collected[map_key].append(id)
 
 
-func is_collected(map_day: String, id: String) -> bool:
-	return collected.has(map_day) and collected[map_day].has(id)
+func is_collected(map_key: String, id: String) -> bool:
+	return collected.has(map_key) and collected[map_key].has(id)
 
 
 func mark_talked(id: String) -> void:
@@ -322,6 +325,7 @@ func _default_state() -> Dictionary:
 		"secrets_held": hand.duplicate(),
 		"secrets_known_by": {},
 		"spawn_seed": 0,
+		"map_day": DEFAULT_MAP_DAY,
 		"collected": {},
 		"notes": _str_array([]),
 		"talked": _str_array([]),
@@ -479,6 +483,9 @@ func _normalize(raw: Dictionary) -> Dictionary:
 			"progress", "current_boss":
 				if typeof(v) == TYPE_STRING:
 					out[key] = v
+			"map_day":
+				if typeof(v) == TYPE_STRING and v != "":
+					out[key] = v
 			"in_fight":
 				if typeof(v) == TYPE_BOOL:
 					out[key] = v
@@ -495,9 +502,9 @@ func _normalize(raw: Dictionary) -> Dictionary:
 							out[key][card] = _str_array(v[card])
 			"collected":
 				if typeof(v) == TYPE_DICTIONARY:
-					for map_day in v:
-						if typeof(v[map_day]) == TYPE_ARRAY:
-							out[key][str(map_day)] = _str_array(v[map_day])
+					for map_key in v:
+						if typeof(v[map_key]) == TYPE_ARRAY:
+							out[key][str(map_key)] = _str_array(v[map_key])
 			"scores":
 				if typeof(v) == TYPE_DICTIONARY:
 					for boss in v:

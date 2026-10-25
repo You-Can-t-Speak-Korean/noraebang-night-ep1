@@ -37,8 +37,10 @@ target_spawn = "from_entrance"
 [node name="from_hallway_1f" parent="." instance=ExtResource("3")]
 position = Vector3(8, 0, 0)
 
-[node name="ShoeRack" parent="." instance=ExtResource("4")]
+[node name="ShoeRack" parent="." instance=ExtResource("5")]
 position = Vector3(0, 0, -7.4)
 size = Vector3(4.0, 1.2, 0.5)
 color = Color(0.45, 0.4, 0.35, 1)
 label_text = "신발장"
+spot_id = "shoe_rack"
+placeholder_line = "(placeholder)"

@@ -1,5 +1,5 @@
 # A gray-box thing the player can press Enter at. It never reveals what is
-# inside; the prompt is shown by the player. For now it only emits `interacted`.
+# inside; the prompt is shown by the player. It only emits `interacted`.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends Area3D
@@ -16,6 +16,8 @@ const REACH_DEPTH := 14.0
 @export var size := Vector3(1.0, 1.5, 0.4)
 @export var color := Color(0.5, 0.45, 0.35)
 @export_multiline var placeholder_line := "(placeholder text)"
+## Set on search spots (data/spawns/map_01.json); the World deals what is found there.
+@export var spot_id := ""
 
 
 func _ready() -> void:
