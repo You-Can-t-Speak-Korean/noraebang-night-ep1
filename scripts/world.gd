@@ -2,9 +2,10 @@
 # the day's finds into the search spots, and shows placeholder text.
 #   Capture one PNG per room (needs a real window, not --headless):
 #     godot --path . -- --capture-map
-#   Capture the HUD (hearts at 7 halves, 눈치 3, DDEOK 2):
+#   Capture the HUD (hearts 3.5, 눈치 3, DDEOK 12):
 #     godot --path . -- --capture-hud
 #   Launch options: --new-game ignores any save; --seed N forces the spot layout.
+#   Dev only: --hearts N sets the hearts after launch (0.5-5, half steps).
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends Node3D
@@ -68,6 +69,8 @@ func _ready() -> void:
 	var args := parse_launch_args(OS.get_cmdline_user_args())
 	_forced_seed = args["seed"]
 	_start_game(args["new_game"] or args["capture_hud"])
+	if args["hearts_halves"] != -1:
+		set_hearts_dev(args["hearts_halves"])
 	hud = HudScene.instantiate()
 	add_child(hud)
 	player = PlayerScene.instantiate()
@@ -80,17 +83,35 @@ func _ready() -> void:
 		_run_capture_hud()
 
 
-## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool}
+## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool,
+## "hearts_halves": int (-1 = none)}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
-			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args}
+			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
+			"hearts_halves": -1}
 	var at := args.find("--seed")
 	if at != -1:
 		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
 			parsed["seed"] = int(args[at + 1])
 		else:
 			push_warning("World: --seed needs a whole number >= 0; ignoring it")
+	at = args.find("--hearts")
+	if at != -1:
+		parsed["hearts_halves"] = hearts_arg_to_halves(args[at + 1]) if at + 1 < args.size() else -1
+		if parsed["hearts_halves"] == -1:
+			push_warning("World: --hearts needs a number of hearts (e.g. 2.5); ignoring it")
 	return parsed
+
+
+## Dev arg --hearts N: hearts in whole or half steps, clamped to 0.5-5. Returns
+## halves (1-10), or -1 when `text` is not a number.
+static func hearts_arg_to_halves(text: String) -> int:
+	if not text.is_valid_float():
+		return -1
+	var hearts := text.to_float()
+	if not is_finite(hearts):
+		return -1
+	return clampi(roundi(hearts * 2.0), 1, 10)
 
 
 ## Loads the save (unless told not to), then rolls a spot layout for this launch.
@@ -110,6 +131,12 @@ func _start_game(ignore_save: bool) -> void:
 		GameState.new_game()
 	GameState.spawn_seed = _roll_seed()
 	deal_layout()
+
+
+## Dev only (--hearts): sets the hearts directly, bypassing damage and healing.
+func set_hearts_dev(halves: int) -> void:
+	GameState.hearts_halves = clampi(halves, 0, GameState.hearts_max_halves)
+	GameState.hearts_changed.emit(GameState.hearts_halves)
 
 
 func _roll_seed() -> int:
@@ -378,7 +405,7 @@ func _run_capture_hud() -> void:
 	fade_time = 0.0
 	GameState.damage(3)
 	GameState.add_nunchi(3)
-	GameState.add_ddeok(2)
+	GameState.add_ddeok(12)
 	hud.refresh()
 	for i in 8:
 		await get_tree().process_frame

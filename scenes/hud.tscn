@@ -1,7 +1,9 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/hud.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hearts_display.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/nunchi_display.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/ddeok_icon.gd" id="4"]
 
 [node name="Hud" type="CanvasLayer"]
 layer = 12
@@ -11,9 +13,9 @@ script = ExtResource("1")
 offset_left = 32.0
 offset_top = 24.0
 offset_right = 700.0
-offset_bottom = 140.0
+offset_bottom = 200.0
 mouse_filter = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 12
 
 [node name="Hearts" type="Control" parent="Box"]
 custom_minimum_size = Vector2(318, 52)
@@ -21,22 +23,34 @@ layout_mode = 2
 mouse_filter = 2
 script = ExtResource("2")
 
+[node name="Nunchi" type="Control" parent="Box"]
+custom_minimum_size = Vector2(322, 22)
+layout_mode = 2
+mouse_filter = 2
+script = ExtResource("3")
+
 [node name="Stats" type="HBoxContainer" parent="Box"]
 layout_mode = 2
 mouse_filter = 2
 theme_override_constants/separation = 36
 
-[node name="Nunchi" type="Label" parent="Box/Stats"]
+[node name="Ddeok" type="HBoxContainer" parent="Box/Stats"]
 layout_mode = 2
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 8
-text = "눈치 0/7"
+mouse_filter = 2
+theme_override_constants/separation = 10
 
-[node name="Ddeok" type="Label" parent="Box/Stats"]
+[node name="Icon" type="Control" parent="Box/Stats/Ddeok"]
+custom_minimum_size = Vector2(46, 26)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+script = ExtResource("4")
+
+[node name="Count" type="Label" parent="Box/Stats/Ddeok"]
 layout_mode = 2
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 8
-text = "DDEOK 0"
+text = "0"
 
 [node name="Secrets" type="Label" parent="Box/Stats"]
 layout_mode = 2

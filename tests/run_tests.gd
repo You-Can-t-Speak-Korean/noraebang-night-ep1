@@ -41,6 +41,7 @@ func _initialize() -> void:
 	_test_map_graph()
 	await _test_map_walk()
 	await _test_world_launch()
+	await _test_hud_icons()
 	await _test_world_search()
 	await _test_world_full_run()
 	_clean_world_saves()
@@ -728,6 +729,8 @@ func _test_map_walk() -> void:
 
 const DealerScript := preload("res://scripts/spawn_dealer.gd")
 const HeartsScript := preload("res://scripts/hearts_display.gd")
+const EyesScript := preload("res://scripts/nunchi_display.gd")
+const DdeokIconScript := preload("res://scripts/ddeok_icon.gd")
 const WORLD_SAVE_DIR := "user://test_world_saves"
 const MAP_KEY := "map_01:sat"
 
@@ -1018,6 +1021,80 @@ func _test_hud_pure() -> void:
 	check(poly.size() >= 24 and lo.is_equal_approx(Vector2.ZERO) and hi.is_equal_approx(Vector2(52, 52)), "heart polygon fills its 52 px box")
 	check(WorldScript.hearts_text(1) == "½" and WorldScript.hearts_text(2) == "1" and WorldScript.hearts_text(3) == "1½", "heart amounts read ½ / 1 / 1½")
 
+	var eye: PackedVector2Array = EyesScript.eye_polygon(38.0, 22.0)
+	var eye_lo := eye[0]
+	var eye_hi := eye[0]
+	for p in eye:
+		eye_lo = Vector2(minf(eye_lo.x, p.x), minf(eye_lo.y, p.y))
+		eye_hi = Vector2(maxf(eye_hi.x, p.x), maxf(eye_hi.y, p.y))
+	check(eye_lo.is_equal_approx(Vector2.ZERO) and eye_hi.is_equal_approx(Vector2(38, 22)), "eye polygon fills its 38 x 22 box")
+	var held_eyes := []
+	for i in 7:
+		held_eyes.append(EyesScript.eye_held(i, 3))
+	check(held_eyes == [true, true, true, false, false, false, false], "3 held = the first 3 eyes filled")
+	var cake: PackedVector2Array = DdeokIconScript.songpyeon_polygon(46.0, 26.0)
+	var cake_lo := cake[0]
+	var cake_hi := cake[0]
+	for p in cake:
+		cake_lo = Vector2(minf(cake_lo.x, p.x), minf(cake_lo.y, p.y))
+		cake_hi = Vector2(maxf(cake_hi.x, p.x), maxf(cake_hi.y, p.y))
+	check(cake_lo.is_equal_approx(Vector2.ZERO) and cake_hi.is_equal_approx(Vector2(46, 26)), "송편 polygon fills its 46 x 26 box")
+
+
+## Counts the filled eyes the way _draw does.
+func _eyes_shown(display: Control) -> int:
+	var n := 0
+	for i in display.cap:
+		if EyesScript.eye_held(i, display.held):
+			n += 1
+	return n
+
+
+func _test_hud_icons() -> void:
+	print("HUD icons follow GameState")
+	var gs := _gs()
+	var world: Node = await _start_world()
+	var hud: Node = world.hud
+	var eyes: Control = hud.nunchi
+	for n in [0, 3, 7]:
+		gs.nunchi = 0
+		if n > 0:
+			gs.add_nunchi(n)
+		await _frames(1)
+		check(gs.nunchi == n and _eyes_shown(eyes) == n and eyes.cap == 7, "%d held eyes of 7 when 눈치 is %d" % [n, n])
+	gs.nunchi = 0
+	gs.nunchi_changed.emit(0)
+	check(_eyes_shown(eyes) == 0, "eyes empty again at 눈치 0")
+	check(eyes.get_child_count() == 0 and not hud.ddeok_label.text.contains("DDEOK"), "no number on the eyes, no DDEOK word on the count")
+	for n in [0, 5, 12]:
+		gs.ddeok = n
+		gs.ddeok_changed.emit(n)
+		check(hud.ddeok_label.text == str(n), "DDEOK count reads %d" % n)
+	for h in [10, 7, 1, 0]:
+		gs.hearts_halves = h
+		gs.hearts_changed.emit(h)
+		check(hud.hearts.halves == h, "hearts match %d halves" % h)
+	# The dev arg's setter updates the HUD through the same signal.
+	world.set_hearts_dev(5)
+	check(gs.hearts_halves == 5 and hud.hearts.halves == 5, "--hearts 2.5 sets 5 halves and the HUD follows")
+	world.set_hearts_dev(99)
+	check(gs.hearts_halves == gs.hearts_max_halves, "the dev setter never exceeds the maximum")
+	# Layout: every group sits inside the box, one under the other, no overlap.
+	await _frames(2)
+	var rects := []
+	for c in [hud.hearts, eyes, hud.get_node("Box/Stats")]:
+		rects.append(Rect2(c.global_position, c.size))
+	var clear := true
+	for i in rects.size():
+		for j in range(i + 1, rects.size()):
+			if rects[i].intersects(rects[j]):
+				clear = false
+	check(clear, "hearts, eyes and the DDEOK/비밀 row do not overlap")
+	var ddeok_row: Control = hud.get_node("Box/Stats/Ddeok")
+	check(not Rect2(ddeok_row.global_position, ddeok_row.size).intersects(Rect2(hud.secrets_label.global_position, hud.secrets_label.size)), "DDEOK group and 비밀 do not overlap")
+	check(Rect2(0, 0, 1920, 1080).encloses(Rect2(hud.get_node("Box").global_position, hud.get_node("Box").size)), "HUD fits inside 1920x1080")
+	await _stop_world(world)
+
 
 func _test_launch_args() -> void:
 	print("Launch args")
@@ -1031,6 +1108,16 @@ func _test_launch_args() -> void:
 	var last: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--seed"]))
 	check(last["seed"] == -1, "--seed with no value is ignored")
 	check(WorldScript.parse_launch_args(PackedStringArray(["--capture-hud"]))["capture_hud"], "--capture-hud recognised")
+	check(none["hearts_halves"] == -1, "no --hearts: hearts untouched")
+	var hearts_cases := {"1": 2, "2.5": 5, "0.5": 1, "5": 10, "3.0": 6, "0": 1, "0.1": 1, "-3": 1, "9": 10, "100": 10, "2.4": 5, "2.2": 4}
+	for text in hearts_cases:
+		var got: int = WorldScript.parse_launch_args(PackedStringArray(["--hearts", text]))["hearts_halves"]
+		check(got == hearts_cases[text], "--hearts %s -> %d halves (got %d)" % [text, hearts_cases[text], got])
+	for junk in ["abc", "", "1.2.3", "nan", "inf", "2 hearts", "--seed"]:
+		check(WorldScript.parse_launch_args(PackedStringArray(["--hearts", junk]))["hearts_halves"] == -1, "--hearts '%s' is ignored" % junk)
+	check(WorldScript.parse_launch_args(PackedStringArray(["--hearts"]))["hearts_halves"] == -1, "--hearts with no value is ignored")
+	var mixed: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--new-game", "--hearts", "1.5", "--seed", "9"]))
+	check(mixed["hearts_halves"] == 3 and mixed["seed"] == 9 and mixed["new_game"], "--hearts combines with other args")
 
 
 func _test_world_launch() -> void:
@@ -1145,12 +1232,12 @@ func _test_world_search() -> void:
 	# The HUD follows GameState.
 	await _frames(1)
 	check(world.hud.hearts.halves == gs.hearts_halves and world.hud.hearts.max_halves == gs.hearts_max_halves, "HUD hearts match GameState (%d halves)" % gs.hearts_halves)
-	check(world.hud.ddeok_label.text == "DDEOK %d" % gs.ddeok and world.hud.nunchi_label.text == "눈치 %d/7" % gs.nunchi, "HUD DDEOK and 눈치 labels match")
+	check(world.hud.ddeok_label.text == str(gs.ddeok) and world.hud.nunchi.held == gs.nunchi and world.hud.nunchi.cap == 7, "HUD DDEOK count and 눈치 eyes match")
 	check(world.hud.secrets_label.text == "비밀 7/7", "HUD shows 비밀 7/7 at the start")
 	gs.lose_secret("pride", "eunju")
 	gs.add_nunchi(2)
 	gs.damage(1)
-	check(world.hud.secrets_label.text == "비밀 6/7" and world.hud.nunchi_label.text == "눈치 2/7" and world.hud.hearts.halves == gs.hearts_halves, "HUD updates on signals")
+	check(world.hud.secrets_label.text == "비밀 6/7" and world.hud.nunchi.held == 2 and world.hud.hearts.halves == gs.hearts_halves, "HUD updates on signals")
 
 	# Death: game over, then Enter restarts in 1학년 3반 with a fresh GameState.
 	gs.hearts_halves = 1

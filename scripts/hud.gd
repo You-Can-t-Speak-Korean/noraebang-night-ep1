@@ -1,12 +1,12 @@
-# Always-on HUD: hearts, 눈치, DDEOK and secret cards. Reads GameState and
-# redraws on its signals.
+# Always-on HUD: hearts, 눈치 eyes, DDEOK 송편 and count, and secret cards.
+# Reads GameState and redraws on its signals.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends CanvasLayer
 
 @onready var hearts: Control = $Box/Hearts
-@onready var nunchi_label: Label = $Box/Stats/Nunchi
-@onready var ddeok_label: Label = $Box/Stats/Ddeok
+@onready var nunchi: Control = $Box/Nunchi
+@onready var ddeok_label: Label = $Box/Stats/Ddeok/Count
 @onready var secrets_label: Label = $Box/Stats/Secrets
 
 
@@ -21,8 +21,8 @@ func _ready() -> void:
 
 func refresh() -> void:
 	hearts.set_hearts(GameState.hearts_halves, GameState.hearts_max_halves)
-	nunchi_label.text = "눈치 %d/%d" % [GameState.nunchi, GameState.nunchi_cap]
-	ddeok_label.text = "DDEOK %d" % GameState.ddeok
+	nunchi.set_nunchi(GameState.nunchi, GameState.nunchi_cap)
+	ddeok_label.text = str(GameState.ddeok)
 	secrets_label.text = "비밀 %d/%d" % [GameState.secrets_held.size(), GameState.hand.size()]
 
 
