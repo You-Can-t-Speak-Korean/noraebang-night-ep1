@@ -11,3 +11,7 @@ Thumbs.db
 
 # Generated music work files (keep finals in audio/)
 audio/**/*.wip.*
+
+# Capture PNGs (written by the --capture-* modes)
+tests/shots/*
+!tests/shots/.gdignore
