@@ -1,0 +1,85 @@
+# SCENE 01 — 김은주 SCENE 1: "너 어디서 왔어?"
+# Source: docs/scripts/scene-01-eunju-scene-1-v0.2.md (every Korean line verbatim).
+#
+# Stage directions are calls on the scene director (scripts/scene_director.gd).
+# No other game logic lives here. Writer's rule: every choice does exactly ONE
+# thing: +1 눈치, -1 비밀, or nothing. 01-A2 and 01-F are not dialogue; the
+# director plays them.
+
+# ── 01-A  RECESS (movement locked) ────────────────────────────
+~ a
+
+$> GameState.set_boss("eunju")
+$>> teacher_exits()
+박철수: 오늘도 만화 안 해?
+오동진: 몰라. 딱지나 해.
+=> END
+
+# ── 01-A3 to 01-E (movement locked) ───────────────────────────
+~ a3
+
+$> eunju_arrives()
+은주: 야. 너.
+if not GameState.has_secret("pride")
+	은주: 아까 반장한테 "미안해…" 했지?
+	$> giggle()
+은주: 너 어디서 왔어?
+
+# 01-B  CHOICE 1: where from
+- 서울에서 왔어.
+	$> GameState.add_nunchi(1)
+	은주: 흥. 서울 사람 같지 않은데.
+- 우리 아빠는 에티오피아 사람이야.
+	$> GameState.lose_secret("dad_country")
+	은주: 에티오피아? 그게 어디야?
+	미숙: 아프리카래!
+	은주: 아프리카에도 학교 있어?
+- 서울에서 왔어요.
+	$> GameState.lose_secret("pride")
+	은주: 왜 나한테 존댓말 해? …그래. 계속 그렇게 해.
+- 너는?
+	은주: 나? 우리 집은 아파트야. 엘리베이터도 있어.
+
+# 01-C  CHOICE 2: the name
+$> grab_nameplate()
+은주: 장. 보. 람? 보람이 뭐야? 무슨 이름이 그래?
+$> class_laughs()
+
+- 헤헤… 좀 이상하지?
+	$> GameState.lose_secret("pride")
+	은주: 응. 이상해.
+- 우리 반에 은주는 세 명이나 있잖아.
+	$> GameState.add_nunchi(1)
+	$> raise_hands()
+	최은주: 나도 은주야!
+	한은주: 나도!
+	$> class_laughs()
+	은주: …시끄러워!
+- (아무 말도 안 한다)
+	$> drop_nameplate()
+
+# 01-D  CHOICE 3: the money question
+은주: 너희 엄마는 뭐 해? 월급 얼마 받아?
+
+- 몰라. 그건 우리 집 비밀이야.
+	$> GameState.add_nunchi(1)
+	은주: 치. 가난해서 그렇지?
+- 몰라… 근데 엄마가 아빠보다 많이 벌어.
+	$> GameState.lose_secret("mom_salary")
+	은주: 진짜? 엄마가 아빠보다 많이 벌어?
+	미경: 너희 아빠 불쌍하다~
+- 우리 아빠는 소주 세 병 마셔!
+	$> GameState.lose_secret("dad_drinking")
+	은주: …그게 자랑이야?
+	박철수: 우리 아빠는 다섯 병!
+	오동진: 우리 아빠는 여섯 병!
+- 너희 엄마는?
+	은주: 우리 엄마는 일 안 해. 우리 아빠가 사장님이야.
+
+# 01-E  HANDOFF
+$> bell()
+$> eunju_returns()
+미숙: 은주야, 쟤도 생일 파티에 불러?
+$> eunju_looks_back()
+은주: …생각해 볼게.
+=> END

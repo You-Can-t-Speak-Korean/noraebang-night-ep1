@@ -4,6 +4,10 @@
   "start_spawn": "start",
   "death_room": "classroom_1_3",
   "death_spawn": "from_hallway_1f",
+  "saturday_exit": {"room": "gate", "target_room": "alley"},
+  "day_unlocked": {
+    "mon": ["stairs/To_hallway_2f"]
+  },
   "rooms": {
     "gate": "res://maps/map_01/gate.tscn",
     "playground": "res://maps/map_01/playground.tscn",

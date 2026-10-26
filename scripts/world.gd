@@ -4,8 +4,11 @@
 #     godot --path . -- --capture-map
 #   Capture the HUD (hearts 3.5, 눈치 3, DDEOK 12):
 #     godot --path . -- --capture-hud
+#   Capture the dialogue box at Choice 1 (second option highlighted):
+#     godot --path . -- --capture-dialogue
 #   Launch options: --new-game ignores any save; --seed N forces the spot layout.
-#   Dev only: --hearts N sets the hearts after launch (0.5-5, half steps).
+#   Dev only: --hearts N sets the hearts after launch (0.5-5, half steps);
+#   --skip-to sat_roam|mon jumps to that progress step.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends Node3D
@@ -16,9 +19,14 @@ const MAP_DATA := "res://data/maps/map_01.json"
 const MAP_ID := "map_01"
 const PlayerScene := preload("res://characters/player.tscn")
 const HudScene := preload("res://scenes/hud.tscn")
+const DialogueBoxScene := preload("res://scenes/ui/dialogue_box.tscn")
+const DirectorScript := preload("res://scripts/scene_director.gd")
 const SpawnDealerScript := preload("res://scripts/spawn_dealer.gd")
-const CAPTURE_DIR := "user://captures/map"
-const CAPTURE_HUD_PATH := "user://captures/hud.png"
+const SKIP_TARGETS: Array[String] = ["sat_roam", "mon"]
+const MONDAY_CARD := "1979년 10월 29일 월요일"
+const SCENE_EXIT_LINE := "(지금은 나갈 수 없다.) [placeholder: scene]"
+## Seconds the date card stays up before Monday starts.
+const TITLE_HOLD := 2.5
 const LOCKED_LINE := "(잠겨 있다.) [placeholder: locked]"
 const GAME_OVER_LINE := "GAME OVER [placeholder]"
 const GAME_OVER_HINT := "Press Enter [placeholder]"
@@ -26,6 +34,7 @@ const FLASH_ALPHA := 0.55
 const FLASH_TIME := 0.4
 
 var fade_time := 0.18
+var title_hold := TITLE_HOLD
 var transitioning := false
 var room: Node3D = null
 var room_id := ""
@@ -40,11 +49,22 @@ var death_spawn := ""
 var spawn_config: Dictionary = {}
 var layout: Dictionary = {}
 var hud: CanvasLayer
+var dialogue_box: CanvasLayer
+var director: Node
+## Off: no Scene 01 and no progress handling; the world starts in the start room.
+## Tests that only need the map set it before adding the world to the tree.
+var begin_progress := true
 var autosave_enabled := true
+## A --capture-* launch: never touches the player's save.
+var capture_mode := false
+## From map_01.json: the door that ends Saturday, and doors that open on a day.
+var saturday_exit: Dictionary = {}
+var day_unlocked: Dictionary = {}
 ## How many times the trap flash has fired (the flash itself is a placeholder).
 var flashes := 0
 
 var _forced_seed := -1
+var _title_label: Label
 var _game_over := false
 var _fade_rect: ColorRect
 var _flash_rect: ColorRect
@@ -65,30 +85,54 @@ func _ready() -> void:
 	start_spawn = data["start_spawn"]
 	death_room = data["death_room"]
 	death_spawn = data["death_spawn"]
+	saturday_exit = data.get("saturday_exit", {})
+	day_unlocked = data.get("day_unlocked", {})
 	spawn_config = SpawnDealerScript.load_config()
 	var args := parse_launch_args(OS.get_cmdline_user_args())
 	_forced_seed = args["seed"]
-	_start_game(args["new_game"] or args["capture_hud"])
+	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"]
+	capture_mode = capturing
+	if capturing:
+		begin_progress = false
+	_start_game(args["new_game"] or capturing)
+	if args["skip_to"] != "":
+		_apply_skip_to(args["skip_to"])
 	if args["hearts_halves"] != -1:
 		set_hearts_dev(args["hearts_halves"])
 	hud = HudScene.instantiate()
 	add_child(hud)
+	dialogue_box = DialogueBoxScene.instantiate()
+	add_child(dialogue_box)
+	dialogue_box.opened.connect(update_lock)
+	dialogue_box.closed.connect(update_lock)
 	player = PlayerScene.instantiate()
 	add_child(player)
-	_load_room(start_room, start_spawn)
+	director = DirectorScript.new()
+	director.world = self
+	add_child(director)
 	GameState.player_died.connect(_on_player_died)
+	if capturing and not args["capture_dialogue"]:
+		_load_room(start_room, start_spawn)
+	elif begin_progress or args["capture_dialogue"]:
+		_load_room(death_room, death_spawn)
+	else:
+		_load_room(start_room, start_spawn)
 	if args["capture_map"]:
 		_run_capture()
 	elif args["capture_hud"]:
 		_run_capture_hud()
+	elif args["capture_dialogue"]:
+		_run_capture_dialogue()
+	elif begin_progress:
+		begin()
 
 
 ## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool,
-## "hearts_halves": int (-1 = none)}
+## "capture_dialogue": bool, "hearts_halves": int (-1 = none), "skip_to": String ("" = none)}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
-			"hearts_halves": -1}
+			"capture_dialogue": "--capture-dialogue" in args, "hearts_halves": -1, "skip_to": ""}
 	var at := args.find("--seed")
 	if at != -1:
 		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
@@ -100,6 +144,12 @@ static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 		parsed["hearts_halves"] = hearts_arg_to_halves(args[at + 1]) if at + 1 < args.size() else -1
 		if parsed["hearts_halves"] == -1:
 			push_warning("World: --hearts needs a number of hearts (e.g. 2.5); ignoring it")
+	at = args.find("--skip-to")
+	if at != -1:
+		if at + 1 < args.size() and SKIP_TARGETS.has(args[at + 1]):
+			parsed["skip_to"] = args[at + 1]
+		else:
+			push_warning("World: --skip-to needs one of %s; ignoring it" % str(SKIP_TARGETS))
 	return parsed
 
 
@@ -116,7 +166,7 @@ static func hearts_arg_to_halves(text: String) -> int:
 
 ## Loads the save (unless told not to), then rolls a spot layout for this launch.
 func _start_game(ignore_save: bool) -> void:
-	autosave_enabled = true
+	autosave_enabled = not capture_mode
 	var loaded := false
 	if not ignore_save and GameState.has_save():
 		var err: Error = GameState.load_game()
@@ -137,6 +187,47 @@ func _start_game(ignore_save: bool) -> void:
 func set_hearts_dev(halves: int) -> void:
 	GameState.hearts_halves = clampi(halves, 0, GameState.hearts_max_halves)
 	GameState.hearts_changed.emit(GameState.hearts_halves)
+
+
+## Dev only (--skip-to): sets the progress step (and Monday's day and deal).
+func _apply_skip_to(target: String) -> void:
+	GameState.set_progress(target)
+	if target == "mon":
+		GameState.map_day = "mon"
+		deal_layout()
+
+
+## Starts from the saved progress step: Scene 01 at 01-A, Saturday's roam, or Monday.
+func begin() -> void:
+	match GameState.progress:
+		"sat_roam":
+			GameState.map_day = "sat"
+			director.enter_roam()
+		"mon":
+			if GameState.map_day != "mon":
+				GameState.map_day = "mon"
+				deal_layout()
+		_:
+			director.start_scene()
+
+
+## The player stands still while any of these is true.
+func update_lock() -> void:
+	if player == null:
+		return
+	var scene_locked: bool = director != null and director.scene_locked
+	var dialogue_open: bool = dialogue_box != null and dialogue_box.is_open
+	player.movement_locked = _text_open or transitioning or _game_over or scene_locked or dialogue_open
+
+
+func close_text() -> void:
+	if _text_open:
+		_close_text()
+
+
+## Public fade for the scene director; 1.0 is black.
+func fade_to(alpha: float) -> void:
+	await _fade(alpha)
 
 
 func _roll_seed() -> int:
@@ -176,6 +267,14 @@ func _build_ui() -> void:
 	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fade_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(_fade_rect)
+	_title_label = Label.new()
+	_title_label.visible = false
+	_title_label.add_theme_font_size_override("font_size", 64)
+	_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_title_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_title_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_title_label)
 	_flash_rect = ColorRect.new()
 	_flash_rect.color = Color(0.8, 0.0, 0.0, 0.0)
 	_flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -215,7 +314,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	var clicked: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
 	if not (event.is_action_pressed("confirm") or clicked) or event.is_echo():
 		return
-	if transitioning or player == null:
+	if transitioning or player == null or (dialogue_box != null and dialogue_box.is_open):
 		return
 	if _game_over:
 		restart_after_death()
@@ -230,18 +329,20 @@ func show_text(line: String) -> void:
 	_text_label.text = line
 	_textbox.visible = true
 	_text_open = true
-	player.movement_locked = true
+	update_lock()
 
 
 func _close_text() -> void:
 	_textbox.visible = false
 	_text_open = false
-	player.movement_locked = false
+	update_lock()
 
 
 func _on_interacted(source: Area3D) -> void:
 	if source.has_method("is_door"):
-		if source.locked:
+		if director != null and director.blocks_exits():
+			show_text(SCENE_EXIT_LINE)
+		elif door_locked(source):
 			show_text(LOCKED_LINE)
 		else:
 			travel(source.target_room, source.target_spawn)
@@ -249,6 +350,14 @@ func _on_interacted(source: Area3D) -> void:
 		_search(source.spot_id)
 	else:
 		show_text(source.placeholder_line)
+
+
+## A scene door is locked unless the current day opens it (map_01.json day_unlocked).
+func door_locked(door: Node3D) -> bool:
+	if not door.locked:
+		return false
+	var opened: Array = day_unlocked.get(GameState.map_day, [])
+	return not opened.has("%s/%s" % [room_id, door.name])
 
 
 func _is_spot_today(spot_id: String) -> bool:
@@ -308,12 +417,14 @@ func _flash() -> void:
 
 func _on_player_died() -> void:
 	_game_over = true
-	player.movement_locked = true
+	update_lock()
 	_game_over_layer.visible = true
 
 
 ## Enter on the game-over screen: everything resets to the start of Scene 01.
 func restart_after_death() -> void:
+	if director != null:
+		director.cancel()
 	GameState.death_reset()
 	GameState.spawn_seed = _roll_seed()
 	deal_layout()
@@ -322,19 +433,48 @@ func restart_after_death() -> void:
 	_game_over_layer.visible = false
 	_close_text()
 	_load_room(death_room, death_spawn)
+	update_lock()
 	room_changed.emit(death_room)
+	if begin_progress:
+		director.start_scene()
 
 
 func travel(target_room: String, target_spawn: String) -> void:
+	if GameState.progress == "sat_roam" and room_id == saturday_exit.get("room") and target_room == saturday_exit.get("target_room"):
+		await end_saturday()
+		return
 	transitioning = true
-	player.movement_locked = true
+	update_lock()
 	await _fade(1.0)
 	_load_room(target_room, target_spawn)
 	autosave()
 	await _fade(0.0)
-	player.movement_locked = false
 	transitioning = false
+	update_lock()
 	room_changed.emit(target_room)
+
+
+## Walking out the 교문 ends Saturday: black, the date card, then Monday in
+## 1학년 3반 with a fresh deal. Placeholder until Scene 02 exists.
+func end_saturday() -> void:
+	transitioning = true
+	update_lock()
+	await _fade(1.0)
+	_title_label.text = MONDAY_CARD
+	_title_label.visible = true
+	if fade_time > 0.0:
+		await get_tree().create_timer(title_hold).timeout
+	GameState.map_day = "mon"
+	GameState.set_progress("mon")
+	GameState.spawn_seed = _roll_seed()
+	deal_layout()
+	_load_room(death_room, death_spawn)
+	autosave()
+	_title_label.visible = false
+	await _fade(0.0)
+	transitioning = false
+	update_lock()
+	room_changed.emit(death_room)
 
 
 func _fade(alpha: float) -> void:
@@ -375,7 +515,7 @@ func _load_room(id: String, spawn_name: String) -> void:
 # ── Capture mode ───────────────────────────────────────────────────────
 
 func _run_capture() -> void:
-	DirAccess.make_dir_recursive_absolute(CAPTURE_DIR)
+	var shots_dir := Shots.dir("map")
 	fade_time = 0.0
 	var ok := true
 	for id in rooms:
@@ -387,12 +527,12 @@ func _run_capture() -> void:
 			await get_tree().process_frame
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
-		var path := "%s/%s.png" % [CAPTURE_DIR, id]
+		var path := "%s/%s.png" % [shots_dir, id]
 		img.save_png(path)
 		img.convert(Image.FORMAT_RGB8)
 		img.resize(480, 270)
 		var lum := _mean_luminance(img)
-		print("%s  %s  luminance %.4f" % [id, ProjectSettings.globalize_path(path), lum])
+		print("%s  %s  luminance %.4f" % [id, path, lum])
 		if lum < 0.01:
 			print("FAIL: %s is (nearly) black" % id)
 			ok = false
@@ -400,8 +540,40 @@ func _run_capture() -> void:
 	get_tree().quit(0 if ok else 1)
 
 
+func _run_capture_dialogue() -> void:
+	var path := Shots.dir().path_join("dialogue.png")
+	fade_time = 0.0
+	director.time_scale = 6.0
+	director.start_scene()
+	# Real flow: click through 01-A, let the free time run out, let 은주 walk over.
+	var frames := 0
+	while not dialogue_box.choosing and frames < 1800:
+		if dialogue_box.waiting:
+			dialogue_box.advance()
+		if director.phase == "a2":
+			director.a2_elapsed = 1e9
+		await get_tree().process_frame
+		frames += 1
+	if not dialogue_box.choosing:
+		print("FAIL: Choice 1 never appeared")
+		get_tree().quit(1)
+		return
+	dialogue_box.move_highlight(1)
+	for i in 8:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	img.save_png(path)
+	img.convert(Image.FORMAT_RGB8)
+	img.resize(480, 270)
+	var lum := _mean_luminance(img)
+	print("dialogue  %s  luminance %.4f  highlighted %d" % [path, lum, dialogue_box.highlighted])
+	print("adapter: ", RenderingServer.get_video_adapter_name())
+	get_tree().quit(0 if lum >= 0.01 and dialogue_box.highlighted == 1 else 1)
+
+
 func _run_capture_hud() -> void:
-	DirAccess.make_dir_recursive_absolute(CAPTURE_HUD_PATH.get_base_dir())
+	var path := Shots.dir().path_join("hud.png")
 	fade_time = 0.0
 	GameState.damage(3)
 	GameState.add_nunchi(3)
@@ -411,11 +583,11 @@ func _run_capture_hud() -> void:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
-	img.save_png(CAPTURE_HUD_PATH)
+	img.save_png(path)
 	img.convert(Image.FORMAT_RGB8)
 	img.resize(480, 270)
 	var lum := _mean_luminance(img)
-	print("hud  %s  luminance %.4f" % [ProjectSettings.globalize_path(CAPTURE_HUD_PATH), lum])
+	print("hud  %s  luminance %.4f" % [path, lum])
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if lum >= 0.01 else 1)
 

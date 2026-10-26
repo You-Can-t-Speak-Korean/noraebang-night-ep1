@@ -3,7 +3,7 @@
 #   F1 toggles volumetric fog, F2 toggles standard fog.
 #   Capture run (needs a real window, not --headless):
 #     godot --path . -- --capture
-#   saves three PNGs to user://captures/ and exits non-zero if they look wrong.
+#   saves three PNGs to tests/shots/ and exits non-zero if they look wrong.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends Node3D
@@ -12,7 +12,6 @@ const ROOM_HALF_WIDTH := 6.0
 const ROOM_DEPTH := 14.0
 const ROOM_HEIGHT := 5.0
 const BORAM_SPEED := 4.0
-const CAPTURE_DIR := "user://captures"
 const SETTLE_FRAMES := 20
 const COMPARE_SIZE := Vector2i(480, 270)
 
@@ -162,7 +161,7 @@ func _status_text() -> String:
 # ── Capture mode ───────────────────────────────────────────────────────
 
 func _run_capture() -> void:
-	DirAccess.make_dir_recursive_absolute(CAPTURE_DIR)
+	var shots_dir := Shots.dir()
 	var steps := [
 		["fog_off", false, false],
 		["fog_standard", true, false],
@@ -176,9 +175,9 @@ func _run_capture() -> void:
 			await get_tree().process_frame
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
-		var path := "%s/%s.png" % [CAPTURE_DIR, step[0]]
+		var path := "%s/%s.png" % [shots_dir, step[0]]
 		img.save_png(path)
-		print("saved ", ProjectSettings.globalize_path(path))
+		print("saved ", path)
 		img.convert(Image.FORMAT_RGB8)
 		img.resize(COMPARE_SIZE.x, COMPARE_SIZE.y, Image.INTERPOLATE_BILINEAR)
 		images[step[0]] = img

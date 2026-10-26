@@ -29,7 +29,7 @@
 		"statue": {"room": "playground", "days": ["sat", "mon"], "trap": {"name": "이순신 동상의 칼", "damage": 2, "weight": 1}},
 		"office": {"room": "office", "days": ["sat", "mon"], "trap": {"name": "사랑의 매", "damage": 2, "weight": 1}},
 		"restroom": {"room": "restroom", "days": ["sat", "mon"], "trap": {"name": "화장실 귀신", "damage": 2, "weight": 1}},
-		"behind_radio_shop": {"room": "alley", "days": ["sat", "mon"], "trap": {"name": "브라운관", "damage": 2, "weight": 1}},
+		"behind_radio_shop": {"room": "alley", "days": ["mon"], "trap": {"name": "브라운관", "damage": 2, "weight": 1}},
 		"landing_2f": {"room": "hallway_2f", "days": ["mon"], "trap": {"name": "깨진 유리창", "damage": 2, "weight": 1}}
 	}
 }

@@ -1,0 +1,21 @@
+{
+  "dialogue": "res://data/dialogue/scene_01.dialogue",
+  "room": "classroom_1_3",
+  "free_seconds": 10.0,
+  "reach": 1.5,
+  "walk_speed": 3.0,
+  "approach_gap": 1.1,
+  "caption_seconds": 1.4,
+  "bell_caption": "(종이 울린다.) [placeholder: bell]",
+  "teacher_exit": {"x": 7.0, "z": -7.0},
+  "actors": {
+    "teacher": {"name": "오경자 선생님", "x": -2.0, "z": -6.6, "color": [0.45, 0.35, 0.3]},
+    "eunju": {"name": "은주", "x": 3.0, "z": -5.4, "color": [0.8, 0.3, 0.35]},
+    "misuk": {"name": "미숙", "x": 1.7, "z": -5.4, "color": [0.9, 0.6, 0.45]},
+    "migyeong": {"name": "미경", "x": 4.3, "z": -5.4, "color": [0.9, 0.7, 0.4]},
+    "cheolsu": {"name": "박철수", "x": -4.6, "z": -3.9, "color": [0.4, 0.55, 0.8]},
+    "dongjin": {"name": "오동진", "x": -3.4, "z": -3.9, "color": [0.35, 0.7, 0.65]},
+    "choi_eunju": {"name": "최은주", "x": -6.6, "z": -5.8, "color": [0.6, 0.5, 0.8]},
+    "han_eunju": {"name": "한은주", "x": -5.2, "z": -5.8, "color": [0.7, 0.55, 0.75]}
+  }
+}

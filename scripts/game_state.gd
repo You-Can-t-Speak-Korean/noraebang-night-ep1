@@ -354,7 +354,7 @@ func _apply_state(state: Dictionary) -> void:
 
 func new_game() -> void:
 	_apply_state(_default_state())
-	progress = "scene_00"
+	progress = "scene_01"
 
 
 func death_reset() -> void:
