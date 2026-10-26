@@ -1,0 +1,106 @@
+# SCENE 02 — 김은주 SCENE 2: 초대장
+# Source: docs/scripts/scene-02-eunju-scene-2-v0.2.md (every Korean line verbatim).
+#
+# Stage directions are calls on the scene director (scripts/scene_director.gd).
+# No other game logic lives here. Writer's rule: every choice does exactly ONE
+# thing: +1 눈치, -1 비밀, or nothing. 02-E is not one conversation: its three
+# triggers are the cues e_entrance, e_gate and e_tv.
+
+# ── 02-A to 02-D (movement locked) ────────────────────────────
+~ a
+
+$> GameState.set_boss("eunju")
+$> eunju_hands_out()
+은주: 자, 내 생일 초대장이야! 이름 부르면 손 들어!
+은주: 박철수!
+박철수: 저요!
+은주: 오동진!
+오동진: 저요!
+은주: 최은주! 한은주!
+최은주·한은주: 저요!
+은주: 함현정!
+$> hyunjeong_raises_hand()
+은주: 현정이는 특별히 금색 봉투. 현정이 엄마는 육성회 회장이잖아.
+$> eunju_passes_boram()
+
+# 02-B  CHOICE 1: 현정
+$> hyunjeong_leans()
+현정: 나 함현정. 너 보람이지?
+현정: 은주 원래 저래. 신경 쓰지 마.
+현정: 이거 먹어. 쫀드기.
+현정: 근데 너희 집 어디야? 이따 같이 가자.
+
+- 학교 앞 문방구에서 만나자.
+	$> GameState.add_nunchi(1)
+	현정: 좋아!
+- 우리 집은 언덕 위에 있어. 파란 대문 집이야.
+	$> GameState.lose_secret("our_home", "hyunjeong")
+	현정: 파란 대문? 우리 엄마한테 말해 줘야지!
+- 응, 좋아!
+	현정: 그럼 이따 보자!
+
+# 02-C  CHOICE 2: the last invitation
+$> eunju_to_front()
+은주: 마지막 초대장은… 장보람!
+$> class_turns()
+은주: 근데 그냥은 안 줘. "은주 공주님" 하고 불러 봐.
+
+- 은주 공주님.
+	$> GameState.lose_secret("pride")
+	은주: 착하네.
+- 은주야, 그냥 줘.
+	$> GameState.add_nunchi(1)
+	은주: …치. 여기.
+- 은주아, 그냥 줘.
+	$> GameState.lose_secret("pride")
+	손미경: 은주아? 너 한국말 못해?
+	$> class_laughs()
+
+# 02-D  CHOICE 3: the form
+$> show_form()
+은주: 다 써. 지금. 안 쓰면 못 와.
+
+- (다 솔직하게 쓴다)
+	$> GameState.lose_secret("mom_job")
+	$> eunju_reads()
+	손미숙·손미경: …진짜?
+	은주: 흥. 그럴 줄 알았어.
+- (쓴다\: "은주네 컬러 TV는 왜 흑백으로 나와?")
+	$> GameState.add_nunchi(1)
+	$> cheolsu_reads()
+	$> class_laughs()
+	은주: 아, 아직 컬러 방송을 안 해서 그런 거야!
+- (이름만 쓰고 돌려준다)
+	은주: …뭐, 됐어.
+
+$> hide_form()
+은주: 토요일 두 시. 꼭 와. 선물은 비싼 걸로.
+
+# Taunts, only for cards 은주 knows.
+if GameState.knows("eunju", "dad_country")
+	손미숙: 너희 아빠도 와?
+	손미경: 아프리카 사람 진짜 보고 싶다!
+if GameState.knows("eunju", "dad_drinking")
+	은주: 너희 아빠는 오지 마. 소주 세 병 마시잖아.
+if GameState.knows("eunju", "mom_salary")
+	은주: 선물은 엄마 월급으로 사 와. 많이 번다며?
+if GameState.knows("eunju", "pride")
+	은주: 올 때 존댓말 잊지 마.
+=> END
+
+# ── 02-E triggers (movement free; the director fires each cue once) ──
+~ e_entrance
+
+현정: 토요일에 나도 가. 같이 가자.
+=> END
+
+~ e_gate
+
+현정: 근데… 은주네 집에 반주기 있대. 노래 시킬 거야.
+=> END
+
+~ e_tv
+
+문태식: …고 박뻥희 대통령의 국장은 오는 토요일에 거행됩니다.
+$> hyunjeong_leaves()
+=> END

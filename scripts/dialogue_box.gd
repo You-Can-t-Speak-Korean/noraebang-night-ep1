@@ -14,6 +14,7 @@ signal line_shown(character: String, text: String)
 signal choice_made(index: int, text: String)
 
 const MAX_CHOICES := 4
+const ALIASES_PATH := "res://data/scenes/speaker_aliases.json"
 const CHOICE_FILL := Color(0.08, 0.08, 0.1, 0.9)
 const CHOICE_FILL_ON := Color(1.0, 0.85, 0.4, 1.0)
 const CHOICE_TEXT := Color(0.92, 0.9, 0.85)
@@ -27,13 +28,34 @@ var choosing := false
 var highlighted := 0
 
 var _generation := 0
+var _aliases: Dictionary = {}
 var _responses: Array = []
 var _rows: Array[PanelContainer] = []
 
-@onready var _panel: PanelContainer = $Root/Panel
-@onready var _speaker: Label = $Root/Panel/Box/Speaker
-@onready var _line: Label = $Root/Panel/Box/Line
-@onready var _choices: VBoxContainer = $Root/Choices
+@onready var _panel: PanelContainer = $Root/Stack/Panel
+@onready var _speaker: Label = $Root/Stack/Panel/Box/Speaker
+@onready var _line: Label = $Root/Stack/Panel/Box/Line
+@onready var _choices: VBoxContainer = $Root/Stack/Choices
+
+func _ready() -> void:
+	_aliases = load_aliases()
+
+
+## script speaker -> label shown (data/scenes/speaker_aliases.json). Display only.
+static func load_aliases(path: String = ALIASES_PATH) -> Dictionary:
+	var data = JSON.parse_string(FileAccess.get_file_as_string(path)) if FileAccess.file_exists(path) else null
+	if typeof(data) == TYPE_DICTIONARY and typeof(data.get("aliases")) == TYPE_DICTIONARY:
+		return data["aliases"]
+	return {}
+
+
+## The label for a script speaker; a joined one (손미숙·손미경) is mapped part by part.
+func display_name(character: String) -> String:
+	var parts := character.split("·")
+	for i in parts.size():
+		parts[i] = _aliases.get(parts[i], parts[i])
+	return "·".join(parts)
+
 
 signal _advanced
 signal _picked(index: int)
@@ -140,7 +162,7 @@ func _close() -> void:
 func _show(line: DialogueLine) -> void:
 	# A response-only line keeps the text that is already on screen.
 	if line.text != "" or line.responses.is_empty():
-		_speaker.text = line.character
+		_speaker.text = display_name(line.character)
 		_speaker.visible = line.character != ""
 		_line.text = line.text
 	_panel.visible = true
@@ -166,7 +188,7 @@ func _make_row(text: String, index: int) -> PanelContainer:
 	row.mouse_filter = Control.MOUSE_FILTER_STOP
 	var label := Label.new()
 	label.text = text
-	label.add_theme_font_size_override("font_size", 32)
+	label.add_theme_font_size_override("font_size", 28)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(label)
 	row.gui_input.connect(func(event: InputEvent):
@@ -187,8 +209,8 @@ func _set_highlight(index: int) -> void:
 		style.set_corner_radius_all(8)
 		style.content_margin_left = 24
 		style.content_margin_right = 24
-		style.content_margin_top = 8
-		style.content_margin_bottom = 8
+		style.content_margin_top = 5
+		style.content_margin_bottom = 5
 		_rows[i].add_theme_stylebox_override("panel", style)
 		var label: Label = _rows[i].get_child(0)
 		label.add_theme_color_override("font_color", CHOICE_TEXT_ON if on else CHOICE_TEXT)

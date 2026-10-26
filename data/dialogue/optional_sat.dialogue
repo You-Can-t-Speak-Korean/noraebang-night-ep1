@@ -1,0 +1,43 @@
+# OPTIONAL CONVERSATIONS: Saturday 27 Oct 1979 (during 01-F)
+# Source: docs/scripts/optional-conversations-sat-v0.1.md (every Korean line verbatim).
+#
+# One cue per conversation (oc01, oc02, oc03). Stage directions are calls on the
+# scene director. The director plays a cue only once per save; after that the
+# world shows a single repeat line and nothing here runs.
+
+# OC-01  딱지 · 운동장 · flavor
+~ oc01
+
+철수: 넘어갔다! 내 꺼야.
+동진: 에이…
+철수: 야, 대통령 죽었대.
+동진: 그럼 이제 누가 대통령 해?
+철수: 몰라. 우리 아빠가 아무 말도 하지 말래.
+동진: …딱지나 해.
+=> END
+
+# OC-02  떠든 사람 · 현관 신발장 · stakes (once per save)
+~ oc02
+
+상훈: 장보람. 너 아까 떠들었지? 월요일에 선생님한테 말할 거야.
+
+- 그럼 은주 이름도 써. 은주가 제일 떠들었잖아.
+	$> GameState.add_nunchi(1)
+	상훈: …은주는 안 돼. 은주네 아빠 사장님이야.
+	$> notebook_closes()
+- 미안해… 다시는 안 떠들게.
+	$> GameState.lose_secret("pride", "banjang")
+	상훈: 그래. 반성해.
+- 알았어.
+	상훈: 월요일에 보자.
+=> END
+
+# OC-03  가정통신문 · 교무실 · flavor
+~ oc03
+
+$> fly_splat()
+오경자: 보람이 아직 안 갔니? 토요일인데 얼른 집에 가야지.
+오경자: 너희 아빠는 한국말 잘하시니?
+오경자: …가정통신문은 엄마한테 드려라. 알았지?
+$> wipe_stick()
+=> END

@@ -7,8 +7,11 @@
 #   Capture the dialogue box at Choice 1 (second option highlighted):
 #     godot --path . -- --capture-dialogue
 #   Launch options: --new-game ignores any save; --seed N forces the spot layout.
+#   Capture the 골목길 with 현정, the TV and the news line:
+#     godot --path . -- --capture-alley
 #   Dev only: --hearts N sets the hearts after launch (0.5-5, half steps);
-#   --skip-to sat_roam|mon jumps to that progress step.
+#   --skip-to scene_01|sat_roam|scene_02|mon_walk|mon_roam (mon = scene_02) jumps to
+#   that progress step; --no-labels starts with the name labels off (F9 toggles).
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends Node3D
@@ -22,8 +25,12 @@ const HudScene := preload("res://scenes/hud.tscn")
 const DialogueBoxScene := preload("res://scenes/ui/dialogue_box.tscn")
 const DirectorScript := preload("res://scripts/scene_director.gd")
 const SpawnDealerScript := preload("res://scripts/spawn_dealer.gd")
-const SKIP_TARGETS: Array[String] = ["sat_roam", "mon"]
+const SKIP_TARGETS: Array[String] = ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon"]
 const MONDAY_CARD := "1979년 10월 29일 월요일"
+const SATURDAY_CARD := "1979년 11월 3일 토요일"
+const END_CARD := "[placeholder] END OF BUILD 3b"
+const MONDAY_STEPS: Array[String] = ["scene_02", "mon_walk", "mon_roam"]
+const HOME_LINE := "(아직 집에 갈 수 없다.) [placeholder: home]"
 const SCENE_EXIT_LINE := "(지금은 나갈 수 없다.) [placeholder: scene]"
 ## Seconds the date card stays up before Monday starts.
 const TITLE_HOLD := 2.5
@@ -34,6 +41,8 @@ const FLASH_ALPHA := 0.55
 const FLASH_TIME := 0.4
 
 var fade_time := 0.18
+## Speed-up for the scene director (tests set it before adding the world).
+var director_time_scale := 1.0
 var title_hold := TITLE_HOLD
 var transitioning := false
 var room: Node3D = null
@@ -60,11 +69,17 @@ var capture_mode := false
 ## From map_01.json: the door that ends Saturday, and doors that open on a day.
 var saturday_exit: Dictionary = {}
 var day_unlocked: Dictionary = {}
+var progress_unlocked: Dictionary = {}
+var home_exit: Dictionary = {}
+## F9 / --no-labels: the door, prop and actor name labels (dev aids).
+var labels_visible := true
+var end_card_shown := false
 ## How many times the trap flash has fired (the flash itself is a placeholder).
 var flashes := 0
 
 var _forced_seed := -1
 var _title_label: Label
+var _end_label: Label
 var _game_over := false
 var _fade_rect: ColorRect
 var _flash_rect: ColorRect
@@ -87,10 +102,13 @@ func _ready() -> void:
 	death_spawn = data["death_spawn"]
 	saturday_exit = data.get("saturday_exit", {})
 	day_unlocked = data.get("day_unlocked", {})
+	progress_unlocked = data.get("progress_unlocked", {})
+	home_exit = data.get("home_exit", {})
 	spawn_config = SpawnDealerScript.load_config()
 	var args := parse_launch_args(OS.get_cmdline_user_args())
 	_forced_seed = args["seed"]
-	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"]
+	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"]
+	labels_visible = not args["no_labels"]
 	capture_mode = capturing
 	if capturing:
 		begin_progress = false
@@ -109,11 +127,12 @@ func _ready() -> void:
 	add_child(player)
 	director = DirectorScript.new()
 	director.world = self
+	director.time_scale = director_time_scale
 	add_child(director)
 	GameState.player_died.connect(_on_player_died)
-	if capturing and not args["capture_dialogue"]:
+	if capturing and not (args["capture_dialogue"] or args["capture_alley"]):
 		_load_room(start_room, start_spawn)
-	elif begin_progress or args["capture_dialogue"]:
+	elif begin_progress or args["capture_dialogue"] or args["capture_alley"]:
 		_load_room(death_room, death_spawn)
 	else:
 		_load_room(start_room, start_spawn)
@@ -123,16 +142,20 @@ func _ready() -> void:
 		_run_capture_hud()
 	elif args["capture_dialogue"]:
 		_run_capture_dialogue()
+	elif args["capture_alley"]:
+		_run_capture_alley()
 	elif begin_progress:
 		begin()
 
 
 ## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool,
-## "capture_dialogue": bool, "hearts_halves": int (-1 = none), "skip_to": String ("" = none)}
+## "capture_dialogue": bool, "capture_alley": bool, "no_labels": bool,
+## "hearts_halves": int (-1 = none), "skip_to": String ("" = none)}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
-			"capture_dialogue": "--capture-dialogue" in args, "hearts_halves": -1, "skip_to": ""}
+			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args,
+			"no_labels": "--no-labels" in args, "hearts_halves": -1, "skip_to": ""}
 	var at := args.find("--seed")
 	if at != -1:
 		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
@@ -189,24 +212,40 @@ func set_hearts_dev(halves: int) -> void:
 	GameState.hearts_changed.emit(GameState.hearts_halves)
 
 
-## Dev only (--skip-to): sets the progress step (and Monday's day and deal).
+## Dev only (--skip-to): sets the progress step (and the day and its deal).
+## "mon" is an alias of scene_02.
 func _apply_skip_to(target: String) -> void:
-	GameState.set_progress(target)
-	if target == "mon":
-		GameState.map_day = "mon"
+	GameState.set_progress("scene_02" if target == "mon" else target)
+	_ensure_day("mon" if MONDAY_STEPS.has(GameState.progress) else "sat")
+
+
+## Makes map_day match the progress step, re-dealing if it changed.
+func _ensure_day(day: String) -> void:
+	if GameState.map_day != day:
+		GameState.map_day = day
 		deal_layout()
 
 
-## Starts from the saved progress step: Scene 01 at 01-A, Saturday's roam, or Monday.
+## Starts from the saved progress step (at the start of that step).
 func begin() -> void:
+	if GameState.progress == "mon":
+		GameState.set_progress("scene_02")  # an older name for the start of Scene 02
+	if MONDAY_STEPS.has(GameState.progress):
+		_ensure_day("mon")
+	elif GameState.progress == "sat_roam":
+		_ensure_day("sat")
 	match GameState.progress:
 		"sat_roam":
-			GameState.map_day = "sat"
 			director.enter_roam()
-		"mon":
-			if GameState.map_day != "mon":
-				GameState.map_day = "mon"
-				deal_layout()
+		"scene_02":
+			director.start_scene_02()
+		"mon_walk":
+			director.enter_walk()
+		"mon_roam":
+			director.enter_mon_roam()
+		"sat2_pending":
+			cut_to_black()
+			_show_end_card()
 		_:
 			director.start_scene()
 
@@ -217,12 +256,31 @@ func update_lock() -> void:
 		return
 	var scene_locked: bool = director != null and director.scene_locked
 	var dialogue_open: bool = dialogue_box != null and dialogue_box.is_open
-	player.movement_locked = _text_open or transitioning or _game_over or scene_locked or dialogue_open
+	player.movement_locked = _text_open or transitioning or _game_over or scene_locked or dialogue_open or end_card_shown
 
 
 func close_text() -> void:
 	if _text_open:
 		_close_text()
+
+
+func text_is_open() -> bool:
+	return _text_open
+
+
+## Black at once (the director fades in from here).
+func cut_to_black() -> void:
+	_fade_rect.color.a = 1.0
+
+
+## F9: show or hide the door, prop and actor name labels.
+func toggle_labels() -> void:
+	labels_visible = not labels_visible
+	apply_labels()
+
+
+func apply_labels() -> void:
+	get_tree().call_group("dev_labels", "set_visible", labels_visible)
 
 
 ## Public fade for the scene director; 1.0 is black.
@@ -275,6 +333,15 @@ func _build_ui() -> void:
 	_title_label.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(_title_label)
+	_end_label = Label.new()
+	_end_label.visible = false
+	_end_label.text = END_CARD
+	_end_label.add_theme_font_size_override("font_size", 48)
+	_end_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_end_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_end_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_end_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_end_label)
 	_flash_rect = ColorRect.new()
 	_flash_rect.color = Color(0.8, 0.0, 0.0, 0.0)
 	_flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -311,10 +378,13 @@ func _build_ui() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
+		toggle_labels()
+		return
 	var clicked: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
 	if not (event.is_action_pressed("confirm") or clicked) or event.is_echo():
 		return
-	if transitioning or player == null or (dialogue_box != null and dialogue_box.is_open):
+	if transitioning or end_card_shown or player == null or (dialogue_box != null and dialogue_box.is_open):
 		return
 	if _game_over:
 		restart_after_death()
@@ -339,11 +409,17 @@ func _close_text() -> void:
 
 
 func _on_interacted(source: Area3D) -> void:
-	if source.has_method("is_door"):
+	if source.has_meta("talk_id"):
+		director.talk(source.get_meta("talk_id"))
+	elif source.has_method("is_door"):
 		if director != null and director.blocks_exits():
 			show_text(SCENE_EXIT_LINE)
+		elif is_home_exit(source) and GameState.progress != "mon_roam":
+			show_text(HOME_LINE)
 		elif door_locked(source):
 			show_text(LOCKED_LINE)
+		elif is_home_exit(source):
+			end_monday()
 		else:
 			travel(source.target_room, source.target_spawn)
 	elif _is_spot_today(source.spot_id):
@@ -352,12 +428,20 @@ func _on_interacted(source: Area3D) -> void:
 		show_text(source.placeholder_line)
 
 
-## A scene door is locked unless the current day opens it (map_01.json day_unlocked).
+## A scene door is locked unless the current day or progress step opens it
+## (map_01.json day_unlocked, progress_unlocked).
 func door_locked(door: Node3D) -> bool:
 	if not door.locked:
 		return false
-	var opened: Array = day_unlocked.get(GameState.map_day, [])
-	return not opened.has("%s/%s" % [room_id, door.name])
+	var key := "%s/%s" % [room_id, door.name]
+	var by_day: Array = day_unlocked.get(GameState.map_day, [])
+	var by_progress: Array = progress_unlocked.get(GameState.progress, [])
+	return not (by_day.has(key) or by_progress.has(key))
+
+
+## The 집 door at the far end of the 골목길.
+func is_home_exit(door: Node3D) -> bool:
+	return room_id == home_exit.get("room") and door.name == home_exit.get("door")
 
 
 func _is_spot_today(spot_id: String) -> bool:
@@ -465,16 +549,39 @@ func end_saturday() -> void:
 	if fade_time > 0.0:
 		await get_tree().create_timer(title_hold).timeout
 	GameState.map_day = "mon"
-	GameState.set_progress("mon")
 	GameState.spawn_seed = _roll_seed()
 	deal_layout()
 	_load_room(death_room, death_spawn)
-	autosave()
 	_title_label.visible = false
-	await _fade(0.0)
 	transitioning = false
 	update_lock()
 	room_changed.emit(death_room)
+	# Scene 02 saves, starts movement-locked and fades in from the black.
+	director.start_scene_02()
+
+
+## Walking through the 집 door ends Monday: black, the date card, then the end
+## card for this build. Placeholder until the party map exists.
+func end_monday() -> void:
+	transitioning = true
+	update_lock()
+	await _fade(1.0)
+	_title_label.text = SATURDAY_CARD
+	_title_label.visible = true
+	if fade_time > 0.0:
+		await get_tree().create_timer(title_hold).timeout
+	GameState.set_progress("sat2_pending")
+	autosave()
+	_title_label.visible = false
+	transitioning = false
+	_show_end_card()
+	room_changed.emit(room_id)
+
+
+func _show_end_card() -> void:
+	end_card_shown = true
+	_end_label.visible = true
+	update_lock()
 
 
 func _fade(alpha: float) -> void:
@@ -510,6 +617,9 @@ func _load_room(id: String, spawn_name: String) -> void:
 	for it in room.find_children("*", "Area3D", true, false):
 		if it.has_method("interact"):
 			it.interacted.connect(_on_interacted)
+	if director != null:
+		director.room_loaded(id)
+	apply_labels()
 
 
 # ── Capture mode ───────────────────────────────────────────────────────
@@ -570,6 +680,41 @@ func _run_capture_dialogue() -> void:
 	print("dialogue  %s  luminance %.4f  highlighted %d" % [path, lum, dialogue_box.highlighted])
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if lum >= 0.01 and dialogue_box.highlighted == 1 else 1)
+
+
+func _run_capture_alley() -> void:
+	var path := Shots.dir().path_join("alley.png")
+	fade_time = 0.0
+	director.time_scale = 6.0
+	GameState.map_day = "mon"
+	deal_layout()
+	director.enter_walk()
+	director.fired = {"entrance": true, "gate": true}
+	_load_room("alley", "from_gate")
+	player.place(-4.0, 0)
+	await get_tree().process_frame
+	# Walk into the TV's range; the real trigger plays the news line.
+	player.place(-2.0, 0)
+	var frames := 0
+	while not (dialogue_box.is_open and dialogue_box.waiting) and frames < 600:
+		await get_tree().process_frame
+		frames += 1
+	if not dialogue_box.waiting:
+		print("FAIL: the news line never appeared")
+		get_tree().quit(1)
+		return
+	for i in 10:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	img.save_png(path)
+	img.convert(Image.FORMAT_RGB8)
+	img.resize(480, 270)
+	var lum := _mean_luminance(img)
+	var ok: bool = director.hyunjeong != null and lum >= 0.01
+	print("alley  %s  luminance %.4f  hyunjeong %s" % [path, lum, str(director.hyunjeong != null)])
+	print("adapter: ", RenderingServer.get_video_adapter_name())
+	get_tree().quit(0 if ok else 1)
 
 
 func _run_capture_hud() -> void:

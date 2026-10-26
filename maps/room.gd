@@ -1,4 +1,4 @@
-# Shared room: builds floor, walls, title, one light and the fixed camera from
+# Shared room: builds floor, walls, one light and the fixed camera from
 # its exports. Each room is a scene inheriting maps/room.tscn.
 #
 # Space: x runs along the room, y is up, z is depth (the front edge at z = 0 is
@@ -8,7 +8,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends Node3D
 
-const FONT := preload("res://art/fonts/NotoSansKR/NotoSansKR-VF.ttf")
 const WALL_MARGIN := 1.0
 ## Camera framing, like the test stage: side-on and slightly high.
 const CAMERA_HEIGHT := 3.4
@@ -34,7 +33,6 @@ var camera: Camera3D
 
 func _ready() -> void:
 	_build_shell()
-	_build_title()
 	_build_light_and_environment()
 	camera = Camera3D.new()
 	camera.name = "Camera"
@@ -99,19 +97,6 @@ func _build_shell() -> void:
 	_add_box("BackWall", Vector3(cx, height / 2.0, -depth), Vector3(width, height, 0.2), wall_color)
 	_add_box("LeftWall", Vector3(left, height / 2.0, -depth / 2.0), Vector3(0.2, height, depth), wall_color.darkened(0.1))
 	_add_box("RightWall", Vector3(right, height / 2.0, -depth / 2.0), Vector3(0.2, height, depth), wall_color.darkened(0.1))
-
-
-func _build_title() -> void:
-	var label := Label3D.new()
-	label.name = "Title"
-	label.text = room_title
-	label.font = FONT
-	label.font_size = 96
-	label.pixel_size = 0.012
-	label.outline_size = 16
-	label.modulate = Color(1, 1, 1, 0.9)
-	label.position = Vector3((bounds_left + bounds_right) / 2.0, height - 1.0, -depth + 0.15)
-	add_child(label)
 
 
 func _build_light_and_environment() -> void:

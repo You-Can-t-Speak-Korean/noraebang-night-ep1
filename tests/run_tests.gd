@@ -54,6 +54,14 @@ func _initialize() -> void:
 	await _test_hud_icons()
 	await _test_world_search()
 	await _test_world_full_run()
+	_test_3b_files()
+	await _test_scene2_effects()
+	await _test_scene2_paths()
+	await _test_scene2_flow()
+	await _test_resume_steps()
+	await _test_scene2_death()
+	await _test_optional_conversations()
+	await _test_polish()
 	_clean_world_saves()
 	print("\n%d checks, %d failed" % [checks, failures])
 	quit(1 if failures > 0 else 0)
@@ -628,7 +636,7 @@ func _test_map_graph() -> void:
 				var back := _door_list(target).filter(func(t): return t.target_room == id)
 				check(not back.is_empty(), "%s: has a return door" % tag)
 	locked.sort()
-	check(locked == ["alley -> stationery", "stairs -> hallway_2f"], "locked doors: 2층 복도 and 문방구 (%s)" % str(locked))
+	check(locked == ["alley -> alley", "alley -> stationery", "stairs -> hallway_2f"], "locked doors: 2층 복도, 문방구 and the 집 exit (%s)" % str(locked))
 	var classroom: Node = scenes["classroom_1_3"]
 	var things := classroom.get_children().filter(func(c): return c.has_method("interact") and not c.has_method("is_door"))
 	check(things.size() >= 2, "1학년 3반 has %d sample interactables" % things.size())
@@ -766,6 +774,7 @@ func _start_world(keep_save := false, with_scene := false) -> Node:
 	_gs().save_path = WORLD_SAVE_DIR + "/save.json"
 	var world: Node = load("res://scenes/map_01.tscn").instantiate()
 	world.begin_progress = with_scene
+	world.director_time_scale = 40.0
 	root.add_child(world)
 	world.fade_time = 0.0
 	await _frames(3)
@@ -1327,6 +1336,7 @@ class StageStub:
 	var calls: Array = []
 
 	func teacher_exits(): calls.append("teacher_exits")
+	func first_line_pause(): calls.append("first_line_pause")
 	func eunju_arrives(): calls.append("eunju_arrives")
 	func giggle(): calls.append("giggle")
 	func grab_nameplate(): calls.append("grab_nameplate")
@@ -1571,9 +1581,9 @@ func _test_dialogue_box() -> void:
 	box.play(res, "a", [StageStub.new()])
 	await _frames(3)
 	check(box.is_open and box.waiting and box.visible, "the box opens on the first line")
-	check(box.get_node("Root/Panel/Box/Speaker").text == "박철수" and box.get_node("Root/Panel/Box/Line").text == "오늘도 만화 안 해?", "speaker and line are shown")
+	check(box.get_node("Root/Stack/Panel/Box/Speaker").text == "박철수" and box.get_node("Root/Stack/Panel/Box/Line").text == "오늘도 만화 안 해?", "speaker and line are shown")
 	await _press("confirm")
-	check(box.get_node("Root/Panel/Box/Line").text == "몰라. 딱지나 해.", "Enter advances")
+	check(box.get_node("Root/Stack/Panel/Box/Line").text == "몰라. 딱지나 해.", "Enter advances")
 	var e := InputEventMouseButton.new()
 	e.button_index = MOUSE_BUTTON_LEFT
 	e.pressed = true
@@ -1650,6 +1660,8 @@ func _drive_scene(world: Node, picks: Array, stop_when: Callable, samples: Dicti
 		var phase: String = world.director.phase
 		if samples.has(phase):
 			samples[phase].append(world.player.movement_locked)
+		if stop_when.call():
+			break
 		if box.choosing:
 			box.choose(picks[asked])
 			asked += 1
@@ -1673,6 +1685,10 @@ func _test_scene_flow() -> void:
 	saved.save_path = gs.save_path
 	check(saved.load_game() == OK and saved.progress == "scene_01", "the start-of-scene save says scene_01")
 	saved.free()
+	var open_wait := 0
+	while not world.dialogue_box.is_open and open_wait < 200:
+		await _frames(1)
+		open_wait += 1
 	check(world.player.movement_locked and world.dialogue_box.is_open, "01-A: movement locked, dialogue open")
 	check(world.director.actors.size() == 8, "8 placeholder actors are in the room")
 	var names := []
@@ -1793,14 +1809,18 @@ func _test_days_and_resume() -> void:
 		guard += 1
 	check(world._title_label.visible and world._title_label.text == "1979년 10월 29일 월요일" and world.player.movement_locked, "the title card shows 1979년 10월 29일 월요일 over black")
 	await _wait_transition(world)
+	var fade_wait := 0
+	while world._fade_rect.color.a > 0.0 and fade_wait < 200:
+		await _frames(1)
+		fade_wait += 1
 	check(not world._title_label.visible and world._fade_rect.color.a == 0.0, "the card and the fade clear afterwards")
-	check(gs.map_day == "mon" and gs.progress == "mon", "map_day mon, progress mon")
-	check(world.room_id == "classroom_1_3" and not world.player.movement_locked, "Monday starts in 1학년 3반 with free movement")
+	check(gs.map_day == "mon" and gs.progress == "scene_02", "map_day mon, progress scene_02")
+	check(world.room_id == "classroom_1_3" and world.player.movement_locked and world.director.phase == "s2", "Scene 02 starts in 1학년 3반 with movement locked")
 	check(world.layout.size() == 5 and gs.spawn_seed != before_seed, "the day was re-dealt (5 finds)")
 	check(gs.ddeok == 1 and not gs.collected.has("map_01:mon"), "Saturday's finds are kept; Monday starts with none collected")
 	var again := make_gs()
 	again.save_path = gs.save_path
-	check(again.load_game() == OK and again.map_day == "mon" and again.progress == "mon" and again.ddeok == 1, "Monday is autosaved")
+	check(again.load_game() == OK and again.map_day == "mon" and again.progress == "scene_02" and again.ddeok == 1, "Scene 02 is autosaved at its start")
 	again.free()
 	await _stop_world(world)
 
@@ -1823,12 +1843,12 @@ func _test_days_and_resume() -> void:
 	await _stop_world(world)
 
 	# Resume from the saved progress step.
-	for step in ["sat_roam", "mon"]:
+	for step in ["sat_roam", "mon_roam"]:
 		var save := make_gs()
 		save.save_path = WORLD_SAVE_DIR + "/save.json"
 		DirAccess.make_dir_recursive_absolute(WORLD_SAVE_DIR)
 		save.set_progress(step)
-		save.map_day = "mon" if step == "mon" else "sat"
+		save.map_day = "mon" if step == "mon_roam" else "sat"
 		save.add_ddeok(4)
 		save.save_game()
 		save.free()
@@ -1836,7 +1856,7 @@ func _test_days_and_resume() -> void:
 		check(gs.progress == step and gs.ddeok == 4, "resume %s: the save loads" % step)
 		check(world.room_id == "classroom_1_3" and not world.player.movement_locked and not world.dialogue_box.is_open, "resume %s: starts in 1학년 3반, free to move" % step)
 		check(world.director.actors.is_empty(), "resume %s: no scene plays" % step)
-		check(gs.map_day == ("mon" if step == "mon" else "sat"), "resume %s: map_day %s" % [step, gs.map_day])
+		check(gs.map_day == ("mon" if step == "mon_roam" else "sat"), "resume %s: map_day %s" % [step, gs.map_day])
 		await _stop_world(world)
 	var scene_save := make_gs()
 	DirAccess.make_dir_recursive_absolute(WORLD_SAVE_DIR)
@@ -1854,18 +1874,746 @@ func _test_skip_to() -> void:
 	var WorldScript = load("res://scripts/world.gd")
 	var none: Dictionary = WorldScript.parse_launch_args(PackedStringArray([]))
 	check(none["skip_to"] == "", "no --skip-to: nothing")
-	for step in ["sat_roam", "mon"]:
+	for step in ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon"]:
 		check(WorldScript.parse_launch_args(PackedStringArray(["--skip-to", step]))["skip_to"] == step, "--skip-to %s" % step)
-	for junk in ["scene_01", "tue", "", "--seed"]:
+	for junk in ["scene_00", "tue", "", "--seed", "sat2_pending"]:
 		check(WorldScript.parse_launch_args(PackedStringArray(["--skip-to", junk]))["skip_to"] == "", "--skip-to '%s' is ignored" % junk)
 	check(WorldScript.parse_launch_args(PackedStringArray(["--skip-to"]))["skip_to"] == "", "--skip-to with no value is ignored")
 	var gs := _gs()
 	var world: Node = await _start_world()
 	world._apply_skip_to("mon")
-	check(gs.progress == "mon" and gs.map_day == "mon" and world.layout.size() == 5, "skip to mon: progress, day and a Monday deal")
+	check(gs.progress == "scene_02" and gs.map_day == "mon" and world.layout.size() == 5, "skip to mon (an alias of scene_02): progress, day and a Monday deal")
 	await _stop_world(world)
 	world = await _start_world()
 	world._apply_skip_to("sat_roam")
 	check(gs.progress == "sat_roam" and gs.map_day == "sat", "skip to sat_roam: progress and Saturday")
 	await _stop_world(world)
+	_clean_world_saves()
+
+
+# ── Step 3b: Scene 02, the walk home, optional conversations, polish ───
+
+const SCENE2_DIALOGUE := "res://data/dialogue/scene_02.dialogue"
+const SCENE2_DOC := "res://docs/scripts/scene-02-eunju-scene-2-v0.2.md"
+const OC_DIALOGUE := "res://data/dialogue/optional_sat.dialogue"
+const OC_DOC := "res://docs/scripts/optional-conversations-sat-v0.1.md"
+const ALL_SPEAKERS := ["박철수", "오동진", "은주", "미숙", "미경", "최은주", "한은주", "최은주·한은주",
+		"손미숙", "손미경", "손미숙·손미경", "현정", "문태식", "철수", "동진", "상훈", "오경자"]
+
+
+## Stands in for the director for the 3b cues (and 01's new pause).
+class Stage3bStub:
+	extends StageStub
+
+	func eunju_hands_out(): calls.append("eunju_hands_out")
+	func hyunjeong_raises_hand(): calls.append("hyunjeong_raises_hand")
+	func eunju_passes_boram(): calls.append("eunju_passes_boram")
+	func hyunjeong_leans(): calls.append("hyunjeong_leans")
+	func eunju_to_front(): calls.append("eunju_to_front")
+	func class_turns(): calls.append("class_turns")
+	func show_form(): calls.append("show_form")
+	func hide_form(): calls.append("hide_form")
+	func eunju_reads(): calls.append("eunju_reads")
+	func cheolsu_reads(): calls.append("cheolsu_reads")
+	func hyunjeong_leaves(): calls.append("hyunjeong_leaves")
+	func notebook_closes(): calls.append("notebook_closes")
+	func fly_splat(): calls.append("fly_splat")
+	func wipe_stick(): calls.append("wipe_stick")
+
+
+## Korean lines of a doc's script block (as "speaker|text" / "-|choice"), stripped
+## of English stage directions and quotes around spoken choices.
+func _doc_korean_lines(doc_path: String) -> Array:
+	var doc := FileAccess.get_file_as_string(doc_path)
+	var start := doc.find("## Script")
+	var fence := doc.find("```", start)
+	var block := doc.substr(fence + 3, doc.find("```", fence + 3) - fence - 3)
+	var english := RegEx.create_from_string("\\s*\\([^)]*[A-Za-z][^)]*\\)")
+	var speaker_line := RegEx.create_from_string("^(?:.*→\\s*)?\\s*(" + "|".join(ALL_SPEAKERS) + "):\\s+(.*)$")
+	var lines := []
+	for raw in block.split("\n"):
+		var line: String = raw
+		var m := speaker_line.search(line)
+		if m != null:
+			lines.append("%s|%s" % [m.get_string(1), english.sub(m.get_string(2), "", true).strip_edges()])
+		elif line.strip_edges().begins_with("▸ "):
+			var rest := line.strip_edges().substr(2).strip_edges().substr(1).strip_edges()
+			if rest.begins_with("\"") and rest.ends_with("\""):
+				rest = rest.substr(1, rest.length() - 2)
+			lines.append("-|%s" % rest)
+	return lines
+
+
+func _file_korean_lines(path: String) -> Array:
+	var lines := []
+	var speaker := RegEx.create_from_string("^(" + "|".join(ALL_SPEAKERS) + "):\\s+(.*)$")
+	for raw in FileAccess.get_file_as_string(path).split("\n"):
+		var line: String = raw.strip_edges()
+		var m := speaker.search(line)
+		if m != null:
+			lines.append("%s|%s" % [m.get_string(1), m.get_string(2)])
+		elif line.begins_with("- "):
+			lines.append("-|%s" % line.substr(2).replace("\\:", ":"))
+	return lines
+
+
+func _verbatim(doc_path: String, dialogue_path: String, label: String, minimum: int) -> void:
+	var doc_lines := _doc_korean_lines(doc_path)
+	var file_lines := _file_korean_lines(dialogue_path)
+	check(doc_lines.size() >= minimum, "%s: found the doc's Korean lines (%d)" % [label, doc_lines.size()])
+	var missing := doc_lines.filter(func(l): return not file_lines.has(l))
+	var extra := file_lines.filter(func(l): return not doc_lines.has(l))
+	check(missing.is_empty(), "%s: every Korean line in the doc appears verbatim %s" % [label, str(missing)])
+	check(extra.is_empty(), "%s: no Korean line the doc lacks %s" % [label, str(extra)])
+	check(doc_lines.size() == file_lines.size(), "%s: same number of lines (%d doc, %d file)" % [label, doc_lines.size(), file_lines.size()])
+
+
+func _test_3b_files() -> void:
+	print("scene_02.dialogue and optional_sat.dialogue")
+	for path in [SCENE2_DIALOGUE, OC_DIALOGUE]:
+		var text := FileAccess.get_file_as_string(path)
+		var result: DMCompilerResult = DMCompiler.compile_string(text, path)
+		check(text != "" and result.errors.is_empty(), "%s compiles with Dialogue Manager (%d errors)" % [path.get_file(), result.errors.size()])
+		check(not text.contains("GameState.add_ddeok") and not text.contains("GameState.damage"), "%s: only set_boss / add_nunchi / lose_secret" % path.get_file())
+	var s2 = load(SCENE2_DIALOGUE)
+	var oc = load(OC_DIALOGUE)
+	check(s2.cues.has("a") and s2.cues.has("e_entrance") and s2.cues.has("e_gate") and s2.cues.has("e_tv"), "scene_02 cues: a, e_entrance, e_gate, e_tv")
+	check(oc.cues.has("oc01") and oc.cues.has("oc02") and oc.cues.has("oc03"), "optional_sat cues: oc01, oc02, oc03")
+	var s2_text := FileAccess.get_file_as_string(SCENE2_DIALOGUE)
+	check(s2_text.contains("GameState.lose_secret(\"our_home\", \"hyunjeong\")") and s2_text.contains("GameState.set_boss(\"eunju\")"), "1B tells 현정 (not 은주); the boss is 은주")
+	# The form's printed lines are the doc's.
+	var cfg: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/scenes/scene_02.json"))
+	var doc := FileAccess.get_file_as_string(SCENE2_DOC)
+	var form_ok := true
+	for line in cfg["form_lines"]:
+		form_ok = form_ok and doc.contains("│   %s" % line)
+	check(form_ok and cfg["form_lines"].size() == 6, "the form shows the doc's 6 printed lines")
+	_verbatim(SCENE2_DOC, SCENE2_DIALOGUE, "scene_02 vs doc", 40)
+	_verbatim(OC_DOC, OC_DIALOGUE, "optional_sat vs doc", 15)
+	# Speaker aliases are display only.
+	check(FileAccess.get_file_as_string(SCENE2_DIALOGUE).contains("손미경: 은주아?"), "the script text keeps 손미경 / 손미숙")
+	var aliases: Dictionary = load("res://scripts/dialogue_box.gd").load_aliases()
+	check(aliases == {"손미숙": "미숙", "손미경": "미경"}, "alias table: 손미숙 -> 미숙, 손미경 -> 미경")
+
+
+## Like _run_cue, plus a state snapshot each time a choice is asked and at the end.
+func _run_cue_snaps(box: Node, res: Resource, cue: String, stub: RefCounted, picks: Array) -> Dictionary:
+	var gs := _gs()
+	var lines: Array = []
+	var record := func(c: String, t: String): lines.append("%s: %s" % [c, t])
+	box.line_shown.connect(record)
+	var snaps: Array = []
+	box.play(res, cue, [stub])
+	var asked := 0
+	var guard := 0
+	while guard < 800:
+		await process_frame
+		guard += 1
+		if box.choosing:
+			snaps.append(_snapshot(gs))
+			box.choose(picks[asked])
+			asked += 1
+		elif box.waiting:
+			box.advance()
+		elif not box.is_open:
+			break
+	snaps.append(_snapshot(gs))
+	box.line_shown.disconnect(record)
+	return {"lines": lines, "asked": asked, "snaps": snaps}
+
+
+func _doc_choices_of(doc_path: String, from_marker: String, to_marker: String) -> Array:
+	var points: Array = []
+	var current: Array = []
+	var lines := FileAccess.get_file_as_string(doc_path).split("\n")
+	var on := false
+	for i in lines.size():
+		var line: String = lines[i]
+		if line.begins_with(from_marker):
+			on = true
+		if to_marker != "" and line.begins_with(to_marker):
+			break
+		if not on:
+			continue
+		if line.begins_with("0") and line.contains("CHOICE"):
+			current = []
+			points.append(current)
+		if line.begins_with("▸ "):
+			var effect := ""
+			for j in range(i + 1, mini(i + 3, lines.size())):
+				if lines[j].strip_edges().begins_with("→"):
+					effect = lines[j].strip_edges().substr(1).strip_edges()
+					break
+			current.append(effect)
+	return points
+
+
+## Checks one option's effect: exactly the one the doc names.
+func _check_effect(label: String, effect: String, before: Dictionary, after: Dictionary, names: Dictionary) -> void:
+	var keys := _changed_keys(before, after)
+	if effect == "nothing":
+		check(keys.is_empty(), label + ": changes nothing %s" % str(keys))
+	elif effect.contains("눈치"):
+		check(keys == ["nunchi"] and after["nunchi"] == before["nunchi"] + 1, label + ": +1 눈치 and nothing else %s" % str(keys))
+	else:
+		var card_name: String = effect.split("🔒")[1].strip_edges().split("  (")[0].strip_edges()
+		var card: String = names.get(card_name, "?")
+		var lost: Array = before["secrets_held"].filter(func(c): return not after["secrets_held"].has(c))
+		var ok: bool = keys == ["secrets_held", "secrets_known_by"] and lost == [card] and after["secrets_held"].size() == before["secrets_held"].size() - 1
+		check(ok, label + ": loses exactly %s %s" % [card, str(keys)])
+
+
+func _test_scene2_effects() -> void:
+	print("Scene 02 and OC-02 choice effects")
+	var gs := _gs()
+	var res = load(SCENE2_DIALOGUE)
+	var oc = load(OC_DIALOGUE)
+	var names := _card_ids_by_name()
+	var points := _doc_choices_of(SCENE2_DOC, "02-B", "02-E")
+	check(points.size() == 3 and points[0].size() == 3 and points[1].size() == 3 and points[2].size() == 3, "the doc has 3 choice points with 3 options each (9 options)")
+	var box: Node = load(DIALOGUE_BOX_PATH).instantiate()
+	root.add_child(box)
+	await _frames(2)
+	for k in points.size():
+		for i in points[k].size():
+			gs.new_game()
+			var stub := Stage3bStub.new()
+			var picks := [2, 2, 2]
+			picks[k] = i
+			var ran := await _run_cue_snaps(box, res, "a", stub, picks)
+			var snaps: Array = ran["snaps"]
+			check(ran["asked"] == 3 and snaps.size() == 4, "02 choice %d option %d: all 3 choices asked" % [k + 1, i + 1])
+			_check_effect("02 choice %d option %d (%s)" % [k + 1, i + 1, points[k][i]], points[k][i], snaps[k], snaps[k + 1], names)
+	# OC-02: 3 options.
+	var oc_points := _doc_choices_of(OC_DOC, "OC-02", "OC-03")
+	check(oc_points.size() == 0 or oc_points[0].size() == 3, "(doc parse) OC-02 has 3 options")
+	var oc_effects := ["+1 👀 눈치", "−1 🔒 자존심", "nothing"]
+	for i in 3:
+		gs.new_game()
+		var ran := await _run_cue_snaps(box, oc, "oc02", Stage3bStub.new(), [i])
+		check(ran["snaps"].size() == 2, "OC-02 option %d: one choice asked" % [i + 1])
+		_check_effect("OC-02 option %d (%s)" % [i + 1, oc_effects[i]], oc_effects[i], ran["snaps"][0], ran["snaps"][1], names)
+		if i == 1:
+			check(gs.knows("banjang", "pride") and not gs.knows("eunju", "pride"), "OC-02 B: 자존심 is known by 반장, not 은주")
+	gs.new_game()
+	box.queue_free()
+	await _frames(1)
+
+
+func _test_scene2_paths() -> void:
+	print("Scene 02 paths and taunts")
+	var gs := _gs()
+	var res = load(SCENE2_DIALOGUE)
+	var box: Node = load(DIALOGUE_BOX_PATH).instantiate()
+	root.add_child(box)
+	await _frames(2)
+	# The +1 option at each point: 02-B A, 02-C B, 02-D B.
+	gs.new_game()
+	await _run_cue_snaps(box, res, "a", Stage3bStub.new(), [0, 1, 1])
+	check(gs.nunchi == 3 and gs.secrets_held.size() == gs.hand.size(), "the max 눈치 path (A, B, B) gives +3 and loses nothing")
+	# 1B: 현정 and her mother know our_home; 은주 does not.
+	gs.new_game()
+	await _run_cue_snaps(box, res, "a", Stage3bStub.new(), [1, 1, 2])
+	check(gs.knows("hyunjeong", "our_home") and gs.knows("hyunjeong_mom", "our_home") and not gs.knows("eunju", "our_home"), "1B: our_home is known by hyunjeong and hyunjeong_mom, not eunju")
+	check(gs.current_boss == "eunju", "the boss is eunju")
+	# Taunts: only for the cards 은주 knows.
+	var taunts := {
+		"dad_country": ["손미숙: 너희 아빠도 와?", "손미경: 아프리카 사람 진짜 보고 싶다!"],
+		"dad_drinking": ["은주: 너희 아빠는 오지 마. 소주 세 병 마시잖아."],
+		"mom_salary": ["은주: 선물은 엄마 월급으로 사 와. 많이 번다며?"],
+		"pride": ["은주: 올 때 존댓말 잊지 마."],
+	}
+	var all_taunts := []
+	for card in taunts:
+		all_taunts.append_array(taunts[card])
+	gs.new_game()
+	var none := await _run_cue_snaps(box, res, "a", Stage3bStub.new(), [2, 1, 2])
+	check(all_taunts.filter(func(l): return none["lines"].has(l)).is_empty(), "no card known to 은주: no taunts")
+	for card in taunts:
+		gs.new_game()
+		gs.lose_secret(card, "eunju")
+		var ran := await _run_cue_snaps(box, res, "a", Stage3bStub.new(), [2, 1, 2])
+		var shown: Array = all_taunts.filter(func(l): return ran["lines"].has(l))
+		check(shown == taunts[card], "only %s known: only its taunt(s) %s" % [card, str(shown)])
+	gs.new_game()
+	for card in taunts:
+		gs.lose_secret(card, "eunju")
+	var every := await _run_cue_snaps(box, res, "a", Stage3bStub.new(), [2, 1, 2])
+	check(all_taunts.filter(func(l): return every["lines"].has(l)).size() == all_taunts.size(), "all four known: all taunts")
+	# Taunts do not depend on who told: 1B's card is known by 현정, so no our_home taunt exists at all.
+	gs.new_game()
+	await _run_cue_snaps(box, res, "a", Stage3bStub.new(), [1, 1, 2])
+	check(gs.knows("hyunjeong", "our_home"), "(sanity) 1B leak data applied")
+	# 자존심 lost in 02-C is known by 은주 and taunted at the end.
+	gs.new_game()
+	var lost_pride := await _run_cue_snaps(box, res, "a", Stage3bStub.new(), [2, 0, 2])
+	check(lost_pride["lines"].has("은주: 올 때 존댓말 잊지 마.") and gs.knows("eunju", "pride"), "자존심 lost in 02-C: 은주 taunts it")
+	# Speaker aliases show on the panel.
+	check(box.display_name("손미숙·손미경") == "미숙·미경" and box.display_name("손미경") == "미경" and box.display_name("은주") == "은주", "speaker labels: 손미숙·손미경 shows as 미숙·미경 (display only)")
+	gs.new_game()
+	box.queue_free()
+	await _frames(1)
+
+
+func _write_progress_save(step: String, day: String, talked: Array = []) -> void:
+	var save := make_gs()
+	DirAccess.make_dir_recursive_absolute(WORLD_SAVE_DIR)
+	save.save_path = WORLD_SAVE_DIR + "/save.json"
+	save.set_progress(step)
+	save.map_day = day
+	for t in talked:
+		save.mark_talked(t)
+	save.save_game()
+	save.free()
+
+
+func _finish_box(world: Node) -> void:
+	var guard := 0
+	while world.dialogue_box.is_open and guard < 600:
+		if world.dialogue_box.waiting:
+			world.dialogue_box.advance()
+		elif world.dialogue_box.choosing:
+			world.dialogue_box.choose(0)
+		await _frames(1)
+		guard += 1
+	await _frames(2)
+
+
+func _await_box(world: Node) -> bool:
+	var guard := 0
+	while not world.dialogue_box.is_open and guard < 120:
+		await _frames(1)
+		guard += 1
+	return world.dialogue_box.is_open
+
+
+func _test_scene2_flow() -> void:
+	print("Scene 02 flow and the walk home")
+	var gs := _gs()
+	var d: Node
+	var world: Node
+	# The date card leads into Scene 02 (covered with Saturday's end); here: from a save.
+	_write_progress_save("scene_02", "mon")
+	world = await _start_world(true, true)
+	d = world.director
+	check(await _await_box(world), "scene_02: the dialogue opens after the fade")
+	check(d.phase == "s2" and world.player.movement_locked and gs.map_day == "mon" and gs.progress == "scene_02", "scene_02: movement locked, map_day mon")
+	check(is_equal_approx(world.player.position.x, 4.5) and world.room_id == "classroom_1_3", "보람 sits at her desk in 1학년 3반")
+	check(d.actors.size() == 7 and d.hyunjeong != null and d.hyunjeong.display_name == "현정", "placeholder actors: 현정 + 7 others (은주, 미숙, 미경, 박철수, 오동진, 최은주, 한은주)")
+	var cast := []
+	for a in d.actors.values():
+		cast.append(a.display_name)
+	cast.append(d.hyunjeong.display_name)
+	cast.sort()
+	var want := ["미경", "미숙", "박철수", "오동진", "은주", "최은주", "한은주", "현정"]
+	want.sort()
+	check(cast == want, "the cast labels match Scene 01's (미숙, 미경, 박철수, 오동진, 은주, 최은주, 한은주) plus 현정")
+	check(FileAccess.file_exists(gs.save_path), "scene_02 autosaved")
+	# The form appears for 02-D and goes after it.
+	var saw_form := false
+	var picks := [2, 2, 2]
+	var guard := 0
+	var asked := 0
+	while world.dialogue_box.is_open and guard < 800:
+		if world.dialogue_box.waiting:
+			world.dialogue_box.advance()
+		elif world.dialogue_box.choosing:
+			world.dialogue_box.choose(picks[asked])
+			asked += 1
+		saw_form = saw_form or d.has_form()
+		await _frames(1)
+		guard += 1
+	await _frames(6)
+	check(saw_form and not d.has_form() and asked == 3, "the 02-D form was drawn during 02-D and is gone after")
+	check(d.phase == "walk" and gs.progress == "mon_walk" and not world.player.movement_locked, "02-E: progress mon_walk, movement unlocked")
+	var saved := make_gs()
+	saved.save_path = gs.save_path
+	check(saved.load_game() == OK and saved.progress == "mon_walk" and saved.map_day == "mon", "mon_walk is autosaved")
+	saved.free()
+	check(d.hyunjeong != null and d.hyunjeong.get_parent() == world.room and d.actors.is_empty(), "현정 waits at the classroom door; the rest of the class is gone")
+	await _stop_world(world)
+
+	# The walk: 현정 follows across every room change; triggers fire once, in order.
+	_write_progress_save("mon_walk", "mon")
+	world = await _start_world(true, true)
+	d = world.director
+	var lines := []
+	world.dialogue_box.line_shown.connect(func(c: String, t: String): lines.append("%s: %s" % [c, t]))
+	check(d.phase == "walk" and not world.player.movement_locked, "mon_walk resume: free to move")
+	check(d.next_trigger() == "entrance", "the first trigger is the 현관")
+	var hops := [
+		["To_hallway_1f", "hallway_1f"], ["To_stairs", "stairs"], ["To_hallway_2f", "hallway_2f"],
+		["To_stairs", "stairs"], ["To_hallway_1f", "hallway_1f"], ["To_entrance", "entrance"],
+	]
+	var follows := true
+	for hop in hops:
+		await _confirm_at(world, world.room.get_node(hop[0]))
+		await _frames(3)
+		if world.dialogue_box.is_open:
+			await _finish_box(world)
+		var h: Node3D = d.hyunjeong
+		var here: bool = world.room_id == hop[1] and h != null and is_instance_valid(h) and h.get_parent() == world.room
+		var near: bool = here and absf(h.position.x - world.player.position.x) < 2.0
+		follows = follows and here and near
+		check(here and near, "현정 follows to %s, beside the arrival door" % hop[1])
+	check(follows and world.room_id == "entrance", "(summary) 현정 followed across 6 room changes, 2층 detour included")
+	check(lines == ["현정: 토요일에 나도 가. 같이 가자."] and d.fired.has("entrance"), "entering the 현관 fired the first line, once (%s)" % str(lines))
+	# Follow tick: she closes the distance.
+	world.player.place(world.player.position.x + 5.0, 0)
+	d._follow_tick(3.0)
+	check(absf(d.hyunjeong.position.x - world.player.position.x) <= 1.51, "현정 stays about 1.5 behind (%.2f)" % absf(d.hyunjeong.position.x - world.player.position.x))
+	# Leaving and coming back does not fire it again.
+	await _confirm_at(world, world.room.get_node("To_hallway_1f"))
+	await _frames(3)
+	await _confirm_at(world, world.room.get_node("To_entrance"))
+	await _frames(5)
+	check(lines.size() == 1 and not world.dialogue_box.is_open, "re-entering the 현관 does not repeat the line")
+	check(d.next_trigger() == "gate", "next trigger: the 교문")
+	await _confirm_at(world, world.room.get_node("To_playground"))
+	await _frames(3)
+	await _confirm_at(world, world.room.get_node("To_gate"))
+	await _frames(3)
+	await _finish_box(world)
+	check(lines.size() == 2 and lines[1] == "현정: 근데… 은주네 집에 반주기 있대. 노래 시킬 거야." and d.fired.has("gate"), "reaching the 교문 fires the second line")
+	await _confirm_at(world, world.room.get_node("To_playground"))
+	await _frames(3)
+	await _confirm_at(world, world.room.get_node("To_gate"))
+	await _frames(5)
+	check(lines.size() == 2, "the 교문 line fires once")
+	await _confirm_at(world, world.room.get_node("To_alley"))
+	await _frames(5)
+	check(world.room_id == "alley" and d.next_trigger() == "tv" and lines.size() == 2, "in the 골목길: only the TV trigger is left")
+	check(world.room.get_node_or_null("TV") != null, "the 골목길 has a TV prop")
+	check(world.door_locked(world.room.get_node("To_stationery")), "the 문방구 door is locked before the TV line")
+	# The 집 exit is inactive before mon_roam.
+	var home: Node3D = world.room.get_node("To_home")
+	world.player.place(home.position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	check(world._text_open and world._text_label.text == world.HOME_LINE and gs.progress == "mon_walk", "the 집 exit does nothing before mon_roam")
+	await _close_text(world)
+	# Out of range, then within 3 units of the 전파사 door.
+	var shop: Node3D = world.room.get_node("To_radio_shop")
+	world.player.place(shop.position.x - 4.0, 0)
+	await _frames(5)
+	check(not world.dialogue_box.is_open and not d.fired.has("tv"), "4 units from the 전파사 door: nothing yet")
+	world.player.place(shop.position.x - 2.5, 0)
+	await _frames(3)
+	check(await _await_box(world), "within 3 units of the 전파사 door the TV line plays")
+	await _finish_box(world)
+	check(lines.size() == 3 and lines[2] == "문태식: …고 박뻥희 대통령의 국장은 오는 토요일에 거행됩니다.", "the anchor 문태식's line plays as dialogue")
+	check(d.hyunjeong == null and not world.room.get_children().any(func(n): return n.has_method("walk_to") and n.visible), "현정 waved and went home")
+	check(gs.progress == "mon_roam" and d.phase == "mon_roam" and not world.player.movement_locked, "progress mon_roam, movement free")
+	check(not world.door_locked(world.room.get_node("To_stationery")), "the 문방구 door is open after the TV line")
+	var after_tv := make_gs()
+	after_tv.save_path = gs.save_path
+	check(after_tv.load_game() == OK and after_tv.progress == "mon_roam", "mon_roam is autosaved")
+	after_tv.free()
+	# Monday's end: the 집 door.
+	world.fade_time = 0.02
+	world.title_hold = 0.3
+	world.player.place(home.position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	guard = 0
+	while not world._title_label.visible and guard < 80:
+		await process_frame
+		guard += 1
+	check(world._title_label.visible and world._title_label.text == "1979년 11월 3일 토요일" and world.player.movement_locked, "the title card shows 1979년 11월 3일 토요일")
+	guard = 0
+	while not world.end_card_shown and guard < 300:
+		await process_frame
+		guard += 1
+	check(world.end_card_shown and world._end_label.visible and world._end_label.text == "[placeholder] END OF BUILD 3b", "the end card shows")
+	check(gs.progress == "sat2_pending" and not world._title_label.visible and world.player.movement_locked, "progress sat2_pending, locked")
+	var end_save := make_gs()
+	end_save.save_path = gs.save_path
+	check(end_save.load_game() == OK and end_save.progress == "sat2_pending", "sat2_pending is autosaved")
+	end_save.free()
+	await _stop_world(world)
+
+	# Launching with sat2_pending shows the same end card.
+	_write_progress_save("sat2_pending", "mon")
+	world = await _start_world(true, true)
+	check(world.end_card_shown and world._end_label.visible and world.player.movement_locked, "resume sat2_pending: the end card")
+	await _stop_world(world)
+
+	# mon_roam resume: the 문방구 door is open and the 집 door works.
+	_write_progress_save("mon_roam", "mon")
+	world = await _start_world(true, true)
+	world._load_room("alley", "")
+	check(world.director.phase == "mon_roam" and not world.door_locked(world.room.get_node("To_stationery")) and not world.door_locked(world.room.get_node("To_home")), "resume mon_roam: 문방구 and 집 doors open")
+	world.fade_time = 0.0
+	world.player.place(world.room.get_node("To_home").position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	await _frames(3)
+	check(gs.progress == "sat2_pending" and world.end_card_shown, "the 집 door ends Monday (no animation timing)")
+	await _stop_world(world)
+
+	# Saturday's 집 door and 문방구 are shut (sat_roam).
+	_write_progress_save("sat_roam", "sat")
+	world = await _start_world(true, true)
+	world._load_room("alley", "")
+	check(world.door_locked(world.room.get_node("To_stationery")) and world.door_locked(world.room.get_node("To_home")), "sat_roam: 문방구 and 집 doors are locked")
+	await _stop_world(world)
+
+
+func _test_resume_steps() -> void:
+	print("Resume from each progress step")
+	var gs := _gs()
+	var want := {
+		"scene_01": "a", "sat_roam": "f", "scene_02": "s2", "mon_walk": "walk", "mon_roam": "mon_roam", "mon": "s2",
+	}
+	for step in want:
+		_write_progress_save(step, "sat" if step in ["scene_01", "sat_roam"] else "mon")
+		var world: Node = await _start_world(true, true)
+		if step in ["scene_01", "scene_02", "mon"]:
+			await _await_box(world)
+		await _frames(2)
+		check(world.director.phase == want[step], "resume %s: phase %s (%s)" % [step, want[step], world.director.phase])
+		check(world.room_id == "classroom_1_3", "resume %s: starts in 1학년 3반" % step)
+		var day := "sat" if step in ["scene_01", "sat_roam"] else "mon"
+		check(gs.map_day == day and world.layout.size() == 5, "resume %s: map_day %s, dealt" % [step, day])
+		var locked: bool = step in ["scene_01", "scene_02", "mon"]
+		check(world.player.movement_locked == locked, "resume %s: movement %s" % [step, "locked" if locked else "free"])
+		if step == "mon":
+			check(gs.progress == "scene_02", "resume mon: treated as the start of scene_02")
+		await _stop_world(world)
+
+
+func _test_scene2_death() -> void:
+	print("Death in the Monday steps")
+	var gs := _gs()
+	for step in ["scene_02", "mon_walk", "mon_roam"]:
+		_write_progress_save(step, "mon")
+		var world: Node = await _start_world(true, true)
+		await _frames(4)
+		gs.add_nunchi(2)
+		gs.lose_secret("pride", "eunju")
+		gs.ddeok = 3
+		gs.hearts_halves = 1
+		gs.damage(1)
+		await _frames(2)
+		check(world._game_over, "%s: dying shows GAME OVER" % step)
+		await _press("confirm")
+		await _frames(4)
+		check(world.room_id == "classroom_1_3" and is_equal_approx(world.player.position.x, 7.0), "%s: death restarts in 1학년 3반 at its door" % step)
+		check(world.director.phase == "a" and gs.progress == "scene_01" and world.player.movement_locked, "%s: restarts at 01-A" % step)
+		check(gs.nunchi == 0 and gs.ddeok == 0 and gs.secrets_held.size() == gs.hand.size() and gs.map_day == "sat" and gs.hearts_halves == gs.hearts_max_halves, "%s: fresh state, Saturday" % step)
+		check(world.director.hyunjeong == null and world.director.fired.is_empty() and not world.director.has_form(), "%s: no 현정, no triggers, no form left" % step)
+		await _stop_world(world)
+
+
+func _test_optional_conversations() -> void:
+	print("Optional conversations")
+	var gs := _gs()
+	_write_progress_save("sat_roam", "sat")
+	var world: Node = await _start_world(true, true)
+	var lines := []
+	world.dialogue_box.line_shown.connect(func(c: String, t: String): lines.append("%s: %s" % [c, t]))
+	# OC-01 in the 운동장: two actors, a talk spot with no body and no label.
+	world._load_room("playground", "")
+	var talkers: Array = world.room.get_children().filter(func(n): return n.has_meta("oc"))
+	var talk_spots: Array = world.room.get_children().filter(func(n): return n.has_meta("talk_id"))
+	check(talkers.size() == 2 and talk_spots.size() == 1, "OC-01: 박철수 and 오동진 and one talk spot in the 운동장")
+	var oc01_names: Array = talkers.map(func(n): return n.display_name)
+	oc01_names.sort()
+	check(oc01_names == ["박철수", "오동진"], "OC-01 actors are 박철수 and 오동진")
+	var spot: Node3D = talk_spots[0]
+	check(spot.find_children("*", "MeshInstance3D", true, false).is_empty() and spot.find_children("*", "Label3D", true, false).is_empty(), "the talk spot has no marker (no body, no label)")
+	var before := _snapshot(gs)
+	world.player.place(spot.position.x, 0)
+	await _frames(3)
+	check(world.player.current_interactable == spot and world.player._prompt.visible, "standing at the talkers shows the usual Enter prompt")
+	await _press("confirm")
+	check(await _await_box(world), "Enter starts OC-01")
+	await _finish_box(world)
+	check(lines.size() == 6 and lines[0] == "철수: 넘어갔다! 내 꺼야." and lines[5] == "동진: …딱지나 해.", "OC-01 plays its 6 lines")
+	check(gs.has_talked("oc01_dakji_sat"), "OC-01 is marked as talked")
+	var diff := _changed_keys(before, _snapshot(gs))
+	check(diff == ["talked"], "OC-01 changes nothing but the talked list %s" % str(diff))
+	# Repeat: one line, no effect.
+	before = _snapshot(gs)
+	await _press("confirm")
+	check(world._text_open and world._text_label.text == "[placeholder] repeat line" and not world.dialogue_box.is_open, "the repeat is a single placeholder line")
+	await _close_text(world)
+	check(_changed_keys(before, _snapshot(gs)).is_empty(), "the repeat has no effect")
+
+	# OC-02 by the 신발장: a separate actor; the search spot still works.
+	world._load_room("entrance", "")
+	var rack: Node3D = world.room.get_node("ShoeRack")
+	var sang: Array = world.room.get_children().filter(func(n): return n.has_meta("oc") and n.display_name == "상훈")
+	check(sang.size() == 1, "OC-02: 상훈 stands in the 현관")
+	check(sang[0] != rack and abs(sang[0].position.x - rack.position.x) < 3.0, "상훈 is beside the 신발장 (a separate actor)")
+	world.player.place(rack.position.x, 0)
+	await _frames(3)
+	check(world.player.current_interactable == rack, "the 신발장 is still the nearest spot at its own position")
+	world.layout = {}
+	await _press("confirm")
+	check(world._text_open and world._text_label.text == world.spawn_config["lines"]["empty"], "the 신발장 search still works")
+	await _close_text(world)
+	var talk2: Node3D = world.room.get_children().filter(func(n): return n.has_meta("talk_id"))[0]
+	lines.clear()
+	var nunchi_before: int = gs.nunchi
+	world.player.place(talk2.position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	check(await _await_box(world), "Enter starts OC-02")
+	var guard := 0
+	while not world.dialogue_box.choosing and guard < 100:
+		if world.dialogue_box.waiting:
+			world.dialogue_box.advance()
+		await _frames(1)
+		guard += 1
+	check(world.dialogue_box.choosing and world.dialogue_box._rows.size() == 3, "OC-02 asks with 3 options")
+	world.dialogue_box.choose(0)
+	await _finish_box(world)
+	check(gs.nunchi == nunchi_before + 1 and gs.has_talked("oc02_sangun_sat"), "OC-02 A: +1 눈치, stakes marked (oc02_sangun_sat)")
+	# Stakes pay out once.
+	await _press("confirm")
+	check(world._text_open and world._text_label.text == "[placeholder] repeat line" and gs.nunchi == nunchi_before + 1, "OC-02 again: the repeat line, no second +1")
+	await _close_text(world)
+	var again := make_gs()
+	again.save_path = gs.save_path
+	world.autosave()
+	check(again.load_game() == OK and again.has_talked("oc02_sangun_sat"), "the talked flag is saved (once per save)")
+	again.free()
+
+	# OC-03 in the 교무실.
+	world._load_room("office", "")
+	var teacher: Array = world.room.get_children().filter(func(n): return n.has_meta("oc"))
+	check(teacher.size() == 1 and teacher[0].display_name == "오경자", "OC-03: 오경자 in the 교무실")
+	lines.clear()
+	var t3: Node3D = world.room.get_children().filter(func(n): return n.has_meta("talk_id"))[0]
+	world.player.place(t3.position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	await _await_box(world)
+	await _finish_box(world)
+	check(lines.size() == 3 and lines[2] == "오경자: …가정통신문은 엄마한테 드려라. 알았지?", "OC-03 plays its 3 lines")
+	await _stop_world(world)
+
+	# Only while progress is sat_roam.
+	for step in ["scene_01", "scene_02", "mon_walk", "mon_roam"]:
+		_write_progress_save(step, "sat" if step == "scene_01" else "mon")
+		world = await _start_world(true, true)
+		await _frames(3)
+		for room_name in ["playground", "entrance", "office"]:
+			world._load_room(room_name, "")
+		var any := false
+		for room_name in ["playground", "entrance", "office"]:
+			world._load_room(room_name, "")
+			any = any or world.room.get_children().any(func(n): return n.has_meta("oc") or n.has_meta("talk_id"))
+		check(not any, "%s: no optional conversations in the rooms" % step)
+		await _stop_world(world)
+	# A save with the talks already done: every conversation is the repeat line.
+	_write_progress_save("sat_roam", "sat", ["oc01_dakji_sat", "oc02_sangun_sat", "oc03_teacher_sat"])
+	world = await _start_world(true, true)
+	world._load_room("entrance", "")
+	var spot2: Node3D = world.room.get_children().filter(func(n): return n.has_meta("talk_id"))[0]
+	var before2 := _snapshot(gs)
+	world.player.place(spot2.position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	check(world._text_open and world._text_label.text == "[placeholder] repeat line" and not world.dialogue_box.is_open, "after load, a done conversation is the repeat line")
+	check(_changed_keys(before2, _snapshot(gs)).is_empty(), "the repeat after load has no effect")
+	await _stop_world(world)
+
+
+func _test_polish() -> void:
+	print("Polish: titles, labels, panel, pacing")
+	var gs := _gs()
+	var world: Node = await _start_world()
+	var gone := true
+	for id in world.rooms:
+		world._load_room(id, "")
+		var titles: Array = world.room.find_children("Title", "Label3D", true, false)
+		gone = gone and titles.is_empty()
+	check(gone, "no room has the big centered title")
+	# Dev labels: on by default, F9 and the helper toggle them, they stay off across rooms.
+	world._load_room("classroom_1_3", "")
+	var labels := get_nodes_in_group("dev_labels")
+	check(labels.size() > 3 and labels.all(func(l): return l.visible), "labels are on by default (%d labels)" % labels.size())
+	check(world.labels_visible, "labels_visible defaults to true")
+	var key := InputEventKey.new()
+	key.keycode = KEY_F9
+	key.pressed = true
+	Input.parse_input_event(key)
+	await _frames(3)
+	check(not world.labels_visible and get_nodes_in_group("dev_labels").all(func(l): return not l.visible), "F9 hides every label")
+	world._load_room("hallway_1f", "")
+	check(get_nodes_in_group("dev_labels").all(func(l): return not l.visible), "labels stay off in the next room")
+	world.toggle_labels()
+	check(world.labels_visible and get_nodes_in_group("dev_labels").all(func(l): return l.visible), "toggling again shows them")
+	var WorldScript = load("res://scripts/world.gd")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--no-labels"]))["no_labels"] and not WorldScript.parse_launch_args(PackedStringArray([]))["no_labels"], "--no-labels is parsed (default: labels on)")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--capture-alley"]))["capture_alley"], "--capture-alley is parsed")
+	# Actor labels at different heights.
+	var cfg: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/scenes/scene_01.json"))
+	check(cfg["fade_in_hold"] == 1.5 and cfg["teacher_walk_seconds"] == 2.5 and cfg["first_line_delay"] == 1.0, "Scene 01 pacing tunables: 1.5 s, 2.5 s, 1.0 s")
+	await _stop_world(world)
+
+	# The panel fits its content; the choice column is compact.
+	var res = load(DIALOGUE_PATH)
+	var box: Node = load(DIALOGUE_BOX_PATH).instantiate()
+	root.add_child(box)
+	await _frames(2)
+	box.play(res, "a3", [Stage3bStub.new()])
+	await _frames(6)
+	var panel: Control = box.get_node("Root/Stack/Panel")
+	check(panel.visible and panel.size.y > 40.0 and panel.size.y < 170.0, "the panel fits a 1-line message (%.0f px high)" % panel.size.y)
+	var guard := 0
+	while not box.choosing and guard < 60:
+		if box.waiting:
+			box.advance()
+		await _frames(1)
+		guard += 1
+	await _frames(3)
+	var column: Control = box.get_node("Root/Stack/Choices")
+	var screen_h: float = box.get_node("Root").size.y
+	check(box.choosing and column.size.y > 0.0 and column.size.y <= screen_h / 3.0, "the 4-option column is at most a third of the screen (%.0f of %.0f px)" % [column.size.y, screen_h])
+	check(column.global_position.y + column.size.y <= panel.global_position.y + 1.0, "the choice column sits above the panel")
+	var one_line_h: float = panel.size.y
+	box.cancel()
+	box.queue_free()
+	await _frames(1)
+	# A 2-line message grows the panel a little, not to a fixed block.
+	var long_box: Node = load(DIALOGUE_BOX_PATH).instantiate()
+	root.add_child(long_box)
+	await _frames(2)
+	long_box.get_node("Root/Stack/Panel/Box/Line").text = "가".repeat(120)
+	long_box.visible = true
+	long_box.get_node("Root/Stack/Panel").visible = true
+	await _frames(4)
+	var long_h: float = long_box.get_node("Root/Stack/Panel").size.y
+	check(long_h > one_line_h and long_h < 260.0, "a 2-line message makes the panel taller (%.0f px)" % long_h)
+	long_box.queue_free()
+	await _frames(1)
+
+	# Scene 01 pacing in real time: hold 1.5 s, teacher 2.5 s, first line 1.0 s after she starts.
+	gs.new_game()
+	_clean_world_saves()
+	gs.save_path = WORLD_SAVE_DIR + "/save.json"
+	var timed: Node = load("res://scenes/map_01.tscn").instantiate()
+	timed.begin_progress = true
+	root.add_child(timed)
+	timed.fade_time = 0.0
+	var started := Time.get_ticks_msec()
+	var first_seen := [-1.0]
+	var teacher_gone_at := -1.0
+	timed.dialogue_box.line_shown.connect(func(_c, _t): if first_seen[0] < 0.0: first_seen[0] = (Time.get_ticks_msec() - started) / 1000.0)
+	guard = 0
+	while (teacher_gone_at < 0.0 or first_seen[0] < 0.0) and guard < 1200:
+		await process_frame
+		guard += 1
+		if timed.dialogue_box.waiting:
+			timed.dialogue_box.advance()
+		var teacher = timed.director.actors.get("teacher")
+		if teacher != null and is_instance_valid(teacher) and not teacher.visible:
+			teacher_gone_at = (Time.get_ticks_msec() - started) / 1000.0
+	var first_line_at: float = first_seen[0]
+	check(first_line_at >= 2.4 and first_line_at <= 3.6, "the boys' first line comes 1.0 s after the 1.5 s hold, while the teacher walks (%.2f s)" % first_line_at)
+	check(teacher_gone_at >= 3.9 and teacher_gone_at <= 5.0, "the teacher's walk out takes 2.5 s after the 1.5 s hold (gone at %.2f s)" % teacher_gone_at)
+	await _stop_world(timed)
 	_clean_world_saves()

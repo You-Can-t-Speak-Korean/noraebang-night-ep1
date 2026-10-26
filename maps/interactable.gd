@@ -18,6 +18,8 @@ const REACH_DEPTH := 14.0
 @export_multiline var placeholder_line := "(placeholder text)"
 ## Set on search spots (data/spawns/map_01.json); the World deals what is found there.
 @export var spot_id := ""
+## Off for talk spots: the character standing there is the visual.
+@export var show_body := true
 
 
 func _ready() -> void:
@@ -32,6 +34,8 @@ func _ready() -> void:
 	shape.position = Vector3(0, size.y / 2.0, 0)
 	add_child(shape)
 
+	if not show_body:
+		return
 	var mesh := BoxMesh.new()
 	mesh.size = size
 	var mat := StandardMaterial3D.new()
@@ -51,6 +55,7 @@ func _ready() -> void:
 		label.pixel_size = 0.008
 		label.outline_size = 10
 		label.position = Vector3(0, size.y + 0.35, size.z / 2.0 + 0.05)
+		label.add_to_group("dev_labels")
 		add_child(label)
 
 

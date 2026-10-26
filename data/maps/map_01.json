@@ -4,9 +4,14 @@
   "start_spawn": "start",
   "death_room": "classroom_1_3",
   "death_spawn": "from_hallway_1f",
-  "saturday_exit": {"room": "gate", "target_room": "alley"},
+  "saturday_exit": {
+    "room": "gate",
+    "target_room": "alley"
+  },
   "day_unlocked": {
-    "mon": ["stairs/To_hallway_2f"]
+    "mon": [
+      "stairs/To_hallway_2f"
+    ]
   },
   "rooms": {
     "gate": "res://maps/map_01/gate.tscn",
@@ -21,5 +26,15 @@
     "alley": "res://maps/map_01/alley.tscn",
     "radio_shop": "res://maps/map_01/radio_shop.tscn",
     "stationery": "res://maps/map_01/stationery.tscn"
+  },
+  "progress_unlocked": {
+    "mon_roam": [
+      "alley/To_stationery",
+      "alley/To_home"
+    ]
+  },
+  "home_exit": {
+    "room": "alley",
+    "door": "To_home"
   }
 }

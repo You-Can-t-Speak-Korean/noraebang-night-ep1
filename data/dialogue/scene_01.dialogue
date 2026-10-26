@@ -11,6 +11,7 @@
 
 $> GameState.set_boss("eunju")
 $>> teacher_exits()
+$> first_line_pause()
 박철수: 오늘도 만화 안 해?
 오동진: 몰라. 딱지나 해.
 => END

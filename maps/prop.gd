@@ -29,4 +29,5 @@ func _ready() -> void:
 		label.pixel_size = 0.008
 		label.outline_size = 8
 		label.position = Vector3(0, size.y / 2.0 + 0.3, size.z / 2.0 + 0.05)
+		label.add_to_group("dev_labels")
 		add_child(label)

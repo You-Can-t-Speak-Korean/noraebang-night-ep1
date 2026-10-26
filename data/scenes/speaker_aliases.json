@@ -1,0 +1,7 @@
+{
+  "note": "Display only: the speaker label shown for a script speaker. The .dialogue text is unchanged. A joined label such as 손미숙·손미경 is mapped part by part.",
+  "aliases": {
+    "손미숙": "미숙",
+    "손미경": "미경"
+  }
+}

@@ -67,3 +67,20 @@ size = Vector3(0.8, 1.0, 0.6)
 color = Color(0.35, 0.33, 0.33, 1)
 spot_id = "behind_radio_shop"
 placeholder_line = "(placeholder)"
+
+[node name="TV" parent="." instance=ExtResource("4")]
+position = Vector3(1.8, 0, -7.6)
+size = Vector3(0.9, 0.7, 0.5)
+color = Color(0.25, 0.3, 0.35, 1)
+elevation = 1.0
+label_text = "TV"
+
+[node name="To_home" parent="." instance=ExtResource("2")]
+position = Vector3(11, 0, -7.85)
+label_text = "집"
+size = Vector3(1.4, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "alley"
+target_spawn = "from_gate"
+locked = true

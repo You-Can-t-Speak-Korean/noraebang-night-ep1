@@ -19,8 +19,9 @@ var _hand: MeshInstance3D
 var _tween: Tween
 
 
-## Builds the capsule and the name label. Call once, before adding to the tree.
-func setup(label_text: String, color: Color) -> void:
+## Builds the capsule and the name label (raised by `label_lift` so neighbours'
+## labels do not overlap). Call once, before adding to the tree.
+func setup(label_text: String, color: Color, label_lift: float = 0.0) -> void:
 	display_name = label_text
 	name = label_text
 	var body := MeshInstance3D.new()
@@ -45,10 +46,11 @@ func setup(label_text: String, color: Color) -> void:
 	label.name = "NameLabel"
 	label.text = label_text
 	label.font = FONT
-	label.font_size = 40
+	label.font_size = 30
 	label.pixel_size = 0.008
-	label.outline_size = 10
-	label.position = Vector3(0, BODY_HEIGHT + 0.45, 0)
+	label.outline_size = 8
+	label.position = Vector3(0, BODY_HEIGHT + 0.4 + label_lift, 0)
+	label.add_to_group("dev_labels")
 	add_child(label)
 
 

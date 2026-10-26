@@ -1,0 +1,29 @@
+{
+  "dialogue": "res://data/dialogue/scene_02.dialogue",
+  "room": "classroom_1_3",
+  "player": {"x": 4.5, "lane": 2},
+  "follow_distance": 1.5,
+  "follow_speed": 5.5,
+  "tv_trigger_range": 3.0,
+  "caption_seconds": 1.0,
+  "walk_speed": 3.0,
+  "form_lines": [
+    "생일 파티 참가 신청서",
+    "이름: ______",
+    "아빠 직업: ______",
+    "엄마 직업: ______",
+    "우리 집 TV: 컬러 / 흑백",
+    "선물: ______ 원짜리"
+  ],
+  "actors": {
+    "hyunjeong": {"name": "현정", "x": 6.0, "z": -5.4, "color": [0.45, 0.75, 0.55], "lift": 0.0},
+    "eunju": {"name": "은주", "x": -2.0, "z": -4.2, "color": [0.8, 0.3, 0.35], "lift": 0.0},
+    "misuk": {"name": "미숙", "x": -3.2, "z": -4.2, "color": [0.9, 0.6, 0.45], "lift": 0.35},
+    "migyeong": {"name": "미경", "x": -0.8, "z": -4.2, "color": [0.9, 0.7, 0.4], "lift": 0.7},
+    "cheolsu": {"name": "박철수", "x": 1.5, "z": -5.4, "color": [0.4, 0.55, 0.8], "lift": 0.0},
+    "dongjin": {"name": "오동진", "x": 3.0, "z": -5.4, "color": [0.35, 0.7, 0.65], "lift": 0.35},
+    "choi_eunju": {"name": "최은주", "x": -6.6, "z": -5.8, "color": [0.6, 0.5, 0.8], "lift": 0.0},
+    "han_eunju": {"name": "한은주", "x": -5.2, "z": -5.8, "color": [0.7, 0.55, 0.75], "lift": 0.35}
+  },
+  "walk_start": {"hyunjeong": {"x": 7.0, "z": -3.0}}
+}

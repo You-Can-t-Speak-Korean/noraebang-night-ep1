@@ -1,0 +1,16 @@
+[remap]
+
+importer="dialogue_manager"
+importer_version=18
+type="Resource"
+uid="uid://c37j06gdiipfx"
+path="res://.godot/imported/optional_sat.dialogue-3a66170d89374f56f91ce18cd8481422.tres"
+
+[deps]
+
+source_file="res://data/dialogue/optional_sat.dialogue"
+dest_files=["res://.godot/imported/optional_sat.dialogue-3a66170d89374f56f91ce18cd8481422.tres"]
+
+[params]
+
+defaults=true
