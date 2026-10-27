@@ -1,0 +1,86 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+
+[node name="empty_classroom" instance=ExtResource("1")]
+room_id = "empty_classroom"
+room_title = "빈 교실"
+bounds_left = -9.0
+bounds_right = 9.0
+wall_color = Color(0.52, 0.5, 0.45, 1)
+
+[node name="To_hallway_2f" parent="." instance=ExtResource("2")]
+position = Vector3(-6, 0, -7.85)
+label_text = "2층 복도"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "hallway_2f"
+target_spawn = "from_empty_classroom"
+
+[node name="from_hallway_2f" parent="." instance=ExtResource("3")]
+position = Vector3(-6, 0, 0)
+
+[node name="Blackboard" parent="." instance=ExtResource("4")]
+position = Vector3(2, 0, -7.85)
+size = Vector3(6.0, 1.6, 0.1)
+color = Color(0.15, 0.22, 0.18, 1)
+elevation = 1.2
+label_text = "칠판"
+
+[node name="OrganBody" parent="." instance=ExtResource("4")]
+position = Vector3(-2.2, 0, -7.1)
+size = Vector3(1.6, 1.1, 0.7)
+color = Color(0.45, 0.3, 0.2, 1)
+label_text = "풍금"
+
+[node name="OrganLid" parent="." instance=ExtResource("4")]
+position = Vector3(-2.2, 0, -7.3)
+size = Vector3(1.6, 0.5, 0.25)
+color = Color(0.4, 0.27, 0.18, 1)
+elevation = 1.1
+
+[node name="OrganKeys" parent="." instance=ExtResource("4")]
+position = Vector3(-2.2, 0, -6.7)
+size = Vector3(1.4, 0.08, 0.3)
+color = Color(0.85, 0.83, 0.75, 1)
+elevation = 0.85
+
+[node name="StackedDesksA" parent="." instance=ExtResource("4")]
+position = Vector3(6.2, 0, -7.0)
+size = Vector3(1.2, 0.7, 0.7)
+color = Color(0.5, 0.42, 0.32, 1)
+label_text = "쌓아 둔 책상"
+
+[node name="StackedDesksB" parent="." instance=ExtResource("4")]
+position = Vector3(6.2, 0, -7.0)
+size = Vector3(1.1, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+elevation = 0.7
+
+[node name="StackedDesksC" parent="." instance=ExtResource("4")]
+position = Vector3(6.2, 0, -7.0)
+size = Vector3(1.0, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+elevation = 1.4
+
+[node name="StackedDesksD" parent="." instance=ExtResource("4")]
+position = Vector3(7.6, 0, -7.0)
+size = Vector3(1.2, 0.7, 0.7)
+color = Color(0.5, 0.42, 0.32, 1)
+
+[node name="StackedDesksE" parent="." instance=ExtResource("4")]
+position = Vector3(7.6, 0, -7.0)
+size = Vector3(1.1, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+elevation = 0.7
+
+[node name="Window1" parent="." instance=ExtResource("4")]
+position = Vector3(-3.9, 0, -7.85)
+size = Vector3(1.6, 1.5, 0.08)
+color = Color(0.6, 0.72, 0.8, 1)
+elevation = 1.1
+label_text = "창문"

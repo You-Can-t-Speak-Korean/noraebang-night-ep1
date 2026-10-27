@@ -42,3 +42,17 @@ size = Vector3(1.2, 1.6, 0.5)
 color = Color(0.4, 0.38, 0.34, 1)
 spot_id = "office"
 placeholder_line = "(placeholder)"
+
+[node name="Bulletin" parent="." instance=ExtResource("4")]
+position = Vector3(-3.5, 0, -7.85)
+size = Vector3(2.4, 1.1, 0.1)
+color = Color(0.55, 0.4, 0.25, 1)
+elevation = 1.3
+label_text = "게시판"
+
+[node name="Taegukgi" parent="." instance=ExtResource("4")]
+position = Vector3(5.8, 0, -7.85)
+size = Vector3(1.2, 0.8, 0.05)
+color = Color(0.88, 0.88, 0.85, 1)
+elevation = 1.5
+label_text = "태극기"

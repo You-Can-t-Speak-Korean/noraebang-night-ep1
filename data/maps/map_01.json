@@ -23,6 +23,7 @@
     "restroom": "res://maps/map_01/restroom.tscn",
     "stairs": "res://maps/map_01/stairs.tscn",
     "hallway_2f": "res://maps/map_01/hallway_2f.tscn",
+    "empty_classroom": "res://maps/map_01/empty_classroom.tscn",
     "alley": "res://maps/map_01/alley.tscn",
     "radio_shop": "res://maps/map_01/radio_shop.tscn",
     "stationery": "res://maps/map_01/stationery.tscn"

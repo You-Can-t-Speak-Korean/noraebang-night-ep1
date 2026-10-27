@@ -75,3 +75,16 @@ position = Vector3(18, 0, 0)
 
 [node name="start" parent="." instance=ExtResource("3")]
 position = Vector3(-3, 0, 0)
+
+[node name="Bulletin" parent="." instance=ExtResource("4")]
+position = Vector3(-4.8, 0, -7.85)
+size = Vector3(2.4, 1.1, 0.1)
+color = Color(0.55, 0.4, 0.25, 1)
+elevation = 1.2
+label_text = "게시판"
+
+[node name="MilkCrate" parent="." instance=ExtResource("4")]
+position = Vector3(4.5, 0, -7.2)
+size = Vector3(0.9, 0.5, 0.6)
+color = Color(0.85, 0.85, 0.8, 1)
+label_text = "우유 급식 상자"

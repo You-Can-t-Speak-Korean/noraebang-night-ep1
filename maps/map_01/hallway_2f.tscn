@@ -32,3 +32,73 @@ size = Vector3(1.2, 0.9, 0.6)
 color = Color(0.4, 0.4, 0.44, 1)
 spot_id = "landing_2f"
 placeholder_line = "(placeholder)"
+
+[node name="To_empty_classroom" parent="." instance=ExtResource("2")]
+position = Vector3(10, 0, -7.85)
+label_text = "빈 교실"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "empty_classroom"
+target_spawn = "from_hallway_2f"
+
+[node name="from_empty_classroom" parent="." instance=ExtResource("3")]
+position = Vector3(10, 0, 0)
+
+[node name="Bulletin" parent="." instance=ExtResource("4")]
+position = Vector3(-7, 0, -7.85)
+size = Vector3(3.0, 1.1, 0.1)
+color = Color(0.55, 0.4, 0.25, 1)
+elevation = 1.2
+label_text = "게시판"
+
+[node name="NationalCharter" parent="." instance=ExtResource("4")]
+position = Vector3(-3, 0, -7.85)
+size = Vector3(1.2, 1.6, 0.08)
+color = Color(0.3, 0.2, 0.12, 1)
+elevation = 1.2
+label_text = "국민교육헌장"
+
+[node name="Window1" parent="." instance=ExtResource("4")]
+position = Vector3(1.5, 0, -7.85)
+size = Vector3(2.0, 1.5, 0.08)
+color = Color(0.6, 0.72, 0.8, 1)
+elevation = 1.1
+label_text = "창문"
+
+[node name="Window2" parent="." instance=ExtResource("4")]
+position = Vector3(4.5, 0, -7.85)
+size = Vector3(2.0, 1.5, 0.08)
+color = Color(0.6, 0.72, 0.8, 1)
+elevation = 1.1
+label_text = "창문"
+
+[node name="Window3" parent="." instance=ExtResource("4")]
+position = Vector3(12.9, 0, -7.85)
+size = Vector3(1.8, 1.5, 0.08)
+color = Color(0.6, 0.72, 0.8, 1)
+elevation = 1.1
+label_text = "창문"
+
+[node name="StackedDesksA" parent="." instance=ExtResource("4")]
+position = Vector3(14.8, 0, -7.1)
+size = Vector3(1.4, 0.7, 0.8)
+color = Color(0.5, 0.42, 0.32, 1)
+label_text = "쌓아 둔 책상"
+
+[node name="StackedDesksB" parent="." instance=ExtResource("4")]
+position = Vector3(14.8, 0, -7.1)
+size = Vector3(1.2, 0.7, 0.7)
+color = Color(0.5, 0.42, 0.32, 1)
+elevation = 0.7
+
+[node name="StackedDesksC" parent="." instance=ExtResource("4")]
+position = Vector3(14.8, 0, -7.1)
+size = Vector3(1.0, 0.7, 0.6)
+color = Color(0.5, 0.42, 0.32, 1)
+elevation = 1.4
+
+[node name="StackedDesksD" parent="." instance=ExtResource("4")]
+position = Vector3(13.4, 0, -7.1)
+size = Vector3(1.1, 0.7, 0.7)
+color = Color(0.5, 0.42, 0.32, 1)

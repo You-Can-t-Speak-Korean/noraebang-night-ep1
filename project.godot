@@ -20,6 +20,10 @@ config/features=PackedStringArray("4.7", "Forward Plus")
 DialogueManager="*res://addons/dialogue_manager/dialogue_manager.gd"
 GameState="*res://scripts/game_state.gd"
 
+[dialogue_manager]
+
+editor/translations/UPDATE_TRANSLATION_TEMPLATES_AUTOMATICALLY=false
+
 [display]
 
 window/size/viewport_width=1920

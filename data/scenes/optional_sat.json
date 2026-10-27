@@ -11,7 +11,7 @@
       "actors": [
         {"name": "상훈", "dx": 0.0, "z": -4.5, "color": [0.7, 0.65, 0.3], "lift": 0.0}
       ]},
-    "oc03": {"room": "office", "talked_id": "oc03_teacher_sat", "x": -1.0, "z": -4.5, "size": [1.4, 1.8, 0.4],
+    "oc03": {"room": "office", "talked_id": "oc03_teacher_sat", "x": -2.4, "z": -4.5, "size": [1.4, 1.8, 0.4],
       "actors": [
         {"name": "오경자", "dx": 0.0, "z": -4.5, "color": [0.45, 0.35, 0.3], "lift": 0.0}
       ]}

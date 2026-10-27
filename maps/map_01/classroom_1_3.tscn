@@ -48,7 +48,7 @@ size = Vector3(1.2, 0.7, 0.6)
 color = Color(0.5, 0.42, 0.32, 1)
 
 [node name="Desk3" parent="." instance=ExtResource("4")]
-position = Vector3(6.0, 0, -6.2)
+position = Vector3(-0.9, 0, -6.2)
 size = Vector3(1.2, 0.7, 0.6)
 color = Color(0.5, 0.42, 0.32, 1)
 

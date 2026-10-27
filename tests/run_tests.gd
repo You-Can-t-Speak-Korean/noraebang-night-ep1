@@ -62,6 +62,11 @@ func _initialize() -> void:
 	await _test_scene2_death()
 	await _test_optional_conversations()
 	await _test_polish()
+	await _test_keycap()
+	_test_door_clearance()
+	_test_empty_classroom()
+	_test_3c_files()
+	_test_import_and_dialogue()
 	_clean_world_saves()
 	print("\n%d checks, %d failed" % [checks, failures])
 	quit(1 if failures > 0 else 0)
@@ -607,7 +612,7 @@ func _test_map_graph() -> void:
 	print("Map graph")
 	var data = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))
 	var rooms: Dictionary = data["rooms"]
-	check(rooms.size() == 12, "12 rooms registered")
+	check(rooms.size() == 13, "13 rooms registered")
 	var scenes := {}
 	for id in rooms:
 		var packed = load(rooms[id])
@@ -720,16 +725,16 @@ func _test_map_walk() -> void:
 	world.player.place(stove.position.x, 0)
 	await _frames(3)
 	check(world.player.current_interactable == stove, "prompt appears at the stove")
-	check(world.player.get_node("Prompt").visible and world.player.get_node("Prompt").text == "Enter", "prompt says Enter")
+	check(world.key_prompt.visible and world.key_prompt.get_node("KeyText").text == "Enter", "the keycap says Enter")
 	world.layout = {}
 	await _press("confirm")
 	check(world._text_open and world._text_label.text == world.spawn_config["lines"]["empty"] and world.player.movement_locked, "stove (a search spot) shows its search result")
-	check(not world.player.get_node("Prompt").visible, "prompt hidden while text is open")
+	check(not world.key_prompt.visible, "keycap hidden while text is open")
 	await _press("confirm")
 	check(not world._text_open and not world.player.movement_locked, "text closes, movement unlocked")
 	world.player.place(-4.5, 0)
 	await _frames(3)
-	check(world.player.current_interactable == null and not world.player.get_node("Prompt").visible, "no prompt away from anything")
+	check(world.player.current_interactable == null and not world.key_prompt.visible, "no keycap away from anything")
 	await _confirm_at(world, world.room.get_node("To_hallway_1f"))
 	check(world.room_id == "hallway_1f", "back to 1층 복도")
 
@@ -2425,7 +2430,7 @@ func _test_optional_conversations() -> void:
 	var before := _snapshot(gs)
 	world.player.place(spot.position.x, 0)
 	await _frames(3)
-	check(world.player.current_interactable == spot and world.player._prompt.visible, "standing at the talkers shows the usual Enter prompt")
+	check(world.player.current_interactable == spot and world.key_prompt.visible, "standing at the talkers shows the usual Enter keycap")
 	await _press("confirm")
 	check(await _await_box(world), "Enter starts OC-01")
 	await _finish_box(world)
@@ -2617,3 +2622,236 @@ func _test_polish() -> void:
 	check(teacher_gone_at >= 3.9 and teacher_gone_at <= 5.0, "the teacher's walk out takes 2.5 s after the 1.5 s hold (gone at %.2f s)" % teacher_gone_at)
 	await _stop_world(timed)
 	_clean_world_saves()
+
+
+# ── Build 3c: keycap, door clearance, 빈 교실, import ──────────────────
+
+const TuningScript := preload("res://scripts/tuning.gd")
+const DIALOGUE_DIR := "res://data/dialogue"
+## A prop whose underside is this high hangs on the wall; it cannot block the floor.
+const OVERHEAD := 1.0
+const BODY_HALF := 0.25
+
+
+func _test_keycap() -> void:
+	print("Interaction keycap")
+	var world: Node = await _start_world()
+	await _confirm_at(world, world.room.get_node("To_classroom_1_3"))
+	var player: Node3D = world.player
+	check(player.find_children("*", "Label3D", true, false).is_empty() and player.get_node_or_null("Prompt") == null, "nothing floats above 보람: no label under the player")
+	var keycap: Node3D = world.key_prompt
+	check(keycap != null and keycap.get_parent() == world.room, "the keycap belongs to the room, not the player")
+	check(keycap.get_node("KeyText").text == "Enter", "the keycap says Enter")
+	var stove: Node3D = world.room.get_node("Stove")
+	player.place(stove.position.x, 0)
+	await _frames(3)
+	check(player.current_interactable == stove and keycap.visible, "free at the stove: the keycap shows")
+	check(is_equal_approx(keycap.global_position.x, stove.global_position.x) and keycap.global_position.y > stove.size.y, "the keycap hovers above the stove")
+	# Nearest wins: next to the 교탁 the closer one gets the cap.
+	var lectern: Node3D = world.room.get_node("Lectern")
+	player.place(lectern.position.x + 0.3, 0)
+	await _frames(3)
+	check(player.current_interactable == lectern and is_equal_approx(keycap.global_position.x, lectern.global_position.x), "the keycap follows the nearest interactable")
+	# Locked (text open, scene, transition...): hidden at once.
+	player.movement_locked = true
+	await _frames(2)
+	check(not keycap.visible, "movement locked: the keycap is hidden")
+	player.movement_locked = false
+	await _frames(2)
+	check(keycap.visible, "movement free again: the keycap is back")
+	await _press("confirm")
+	check(world.text_is_open() and not keycap.visible, "while the text box is open the keycap is hidden")
+	await _press("confirm")
+	# Doors get one too, above the door.
+	var door: Node3D = world.room.get_node("To_hallway_1f")
+	player.place(door.position.x, 0)
+	await _frames(3)
+	check(keycap.visible and keycap.global_position.y > door.size.y, "the keycap hovers above a door")
+	# Away from everything: gone.
+	player.place(-4.5, 0)
+	await _frames(3)
+	check(not keycap.visible, "no keycap away from anything")
+	# A new room gets its own keycap.
+	player.place(door.position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	await _wait_transition(world)
+	await _frames(3)
+	check(world.key_prompt != null and is_instance_valid(world.key_prompt) and world.key_prompt.get_parent() == world.room and world.key_prompt.visible, "the next room has its keycap, shown at the arrival door")
+	await _stop_world(world)
+
+
+## Everything that stands on the floor of a room, as {name, lo, hi, z0, z1}.
+func _floor_things(room: Node, room_id: String) -> Array:
+	var things := []
+	for c in room.get_children():
+		if c.has_method("is_door") or c.has_method("is_spawn_point") or not ("size" in c):
+			continue
+		if "elevation" in c and c.elevation >= OVERHEAD:
+			continue
+		things.append({"name": str(c.name), "lo": c.position.x - c.size.x / 2.0, "hi": c.position.x + c.size.x / 2.0,
+				"z0": c.position.z - c.size.z / 2.0, "z1": c.position.z + c.size.z / 2.0})
+	# Scene actors and talk spots are placed from data, not in the room scene.
+	# (Not checked: 현정 waiting at the door and following 보람, and 선생님 leaving by it; those are meant to be there.)
+	for path in ["res://data/scenes/scene_01.json", "res://data/scenes/scene_02.json"]:
+		var cfg: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if cfg["room"] != room_id:
+			continue
+		for id in cfg["actors"]:
+			var a: Dictionary = cfg["actors"][id]
+			things.append({"name": "%s actor %s" % [path.get_file(), id], "lo": a["x"] - BODY_HALF, "hi": a["x"] + BODY_HALF,
+					"z0": a["z"] - BODY_HALF, "z1": a["z"] + BODY_HALF})
+	var optional: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/scenes/optional_sat.json"))
+	for id in optional["conversations"]:
+		var oc: Dictionary = optional["conversations"][id]
+		if oc["room"] != room_id:
+			continue
+		things.append({"name": "%s talk spot" % id, "lo": oc["x"] - oc["size"][0] / 2.0, "hi": oc["x"] + oc["size"][0] / 2.0,
+				"z0": oc["z"] - oc["size"][2] / 2.0, "z1": oc["z"] + oc["size"][2] / 2.0})
+		for a in oc["actors"]:
+			var ax: float = oc["x"] + a["dx"]
+			things.append({"name": "%s actor %s" % [id, a["name"]], "lo": ax - BODY_HALF, "hi": ax + BODY_HALF,
+					"z0": a["z"] - BODY_HALF, "z1": a["z"] + BODY_HALF})
+	return things
+
+
+func _test_door_clearance() -> void:
+	print("Doors stay clear")
+	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))
+	var lanes := TuningScript.lane_config()
+	var tested := 0
+	for id in data["rooms"]:
+		var room: Node = load(data["rooms"][id]).instantiate()
+		var things := _floor_things(room, id)
+		var bad := []
+		for door in _door_list(room):
+			# The reach zone is the door's width plus half a metre each side, at every depth.
+			var reach_lo: float = door.position.x - (door.size.x + 1.0) / 2.0
+			var reach_hi: float = door.position.x + (door.size.x + 1.0) / 2.0
+			for t in things:
+				if t["lo"] < reach_hi and reach_lo < t["hi"]:
+					bad.append("%s in the reach of %s" % [t["name"], door.name])
+		# Arrival points: nothing stands where 보람 appears.
+		for spawn in room.get_children().filter(func(c): return c.has_method("is_spawn_point")):
+			var z: float = room.lane_origin_z - spawn.lane * lanes["lane_spacing"]
+			for t in things:
+				if t["lo"] < spawn.position.x + BODY_HALF and spawn.position.x - BODY_HALF < t["hi"] and t["z0"] < z + BODY_HALF and z - BODY_HALF < t["z1"]:
+					bad.append("%s on the arrival point %s" % [t["name"], spawn.name])
+		check(bad.is_empty(), "%s: nothing in a door's reach zone or on an arrival point %s" % [id, str(bad)])
+		tested += 1
+		room.free()
+	check(tested == data["rooms"].size(), "clearance checked in every registered room (%d)" % tested)
+	# The case that started it: no desk in front of the 1학년 3반 door.
+	var classroom: Node = load(data["rooms"]["classroom_1_3"]).instantiate()
+	var door: Node3D = classroom.get_node("To_hallway_1f")
+	var desks := classroom.get_children().filter(func(c): return str(c.name).begins_with("Desk"))
+	check(desks.size() == 6 and desks.all(func(d): return absf(d.position.x - door.position.x) >= (door.size.x + 1.0) / 2.0 + d.size.x / 2.0), "1학년 3반: all six desks are clear of the door's reach")
+	classroom.free()
+
+
+func _test_empty_classroom() -> void:
+	print("빈 교실 and the map")
+	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))
+	check(data["rooms"].get("empty_classroom") == "res://maps/map_01/empty_classroom.tscn", "빈 교실 is in the registry")
+	var lanes := TuningScript.lane_config()
+	var scenes := {}
+	for id in data["rooms"]:
+		scenes[id] = load(data["rooms"][id]).instantiate()
+	var empty: Node = scenes["empty_classroom"]
+	var hall: Node = scenes["hallway_2f"]
+	check(empty.room_id == "empty_classroom" and empty.room_title == "빈 교실", "빈 교실 has its id and title")
+	var out: Node3D = empty.get_node_or_null("To_hallway_2f")
+	var into: Node3D = hall.get_node_or_null("To_empty_classroom")
+	check(out != null and out.target_room == "hallway_2f" and hall.get_spawn(out.target_spawn) != null, "a door from 빈 교실 back to the 2층 복도, with its spawn")
+	check(into != null and into.target_room == "empty_classroom" and empty.get_spawn(into.target_spawn) != null, "a door from the 2층 복도 into 빈 교실, with its spawn")
+	check(not out.locked and not into.locked, "neither door of 빈 교실 is locked itself")
+	var names := empty.get_children().map(func(c): return str(c.name))
+	check(names.has("OrganBody") and names.has("Blackboard") and names.has("StackedDesksA"), "빈 교실 has the 풍금, the 칠판 and stacked desks")
+	check(empty.get_children().filter(func(c): return c.has_method("interact") and not c.has_method("is_door")).is_empty(), "no search spots or interactables in 빈 교실")
+	# Same tuning as every other room: default shell, lanes inside the room.
+	var defaults: Node = load("res://maps/room.tscn").instantiate()
+	for id in scenes:
+		var r: Node = scenes[id]
+		var deepest: float = r.lane_origin_z - (lanes["lane_count"] - 1) * lanes["lane_spacing"]
+		check(deepest > -r.depth, "%s: all %d lanes fit inside the room" % [id, lanes["lane_count"]])
+	check(empty.depth == defaults.depth and empty.height == defaults.height and empty.lane_origin_z == defaults.lane_origin_z, "빈 교실 uses the default depth, height and lane origin")
+	defaults.free()
+	# Saturday: the 2층 stairs door is the only way up, and it is locked; Monday opens it.
+	for day in ["sat", "mon"]:
+		var open_doors: Array = data.get("day_unlocked", {}).get(day, [])
+		var seen := {data["start_room"]: true}
+		var queue: Array = [data["start_room"]]
+		while not queue.is_empty():
+			var here: String = queue.pop_front()
+			for d in _door_list(scenes[here]):
+				var key := "%s/%s" % [here, d.name]
+				if d.locked and not open_doors.has(key):
+					continue
+				if not seen.has(d.target_room):
+					seen[d.target_room] = true
+					queue.append(d.target_room)
+		if day == "sat":
+			check(not seen.has("hallway_2f") and not seen.has("empty_classroom"), "Saturday: neither the 2층 복도 nor 빈 교실 can be reached")
+		else:
+			check(seen.has("hallway_2f") and seen.has("empty_classroom"), "Monday: both can be reached through the stairs door")
+	for s in scenes.values():
+		s.free()
+
+
+func _test_3c_files() -> void:
+	print("Build 3c: args, props")
+	var WorldScript = load("res://scripts/world.gd")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--capture-rooms"]))["capture_rooms"] and not WorldScript.parse_launch_args(PackedStringArray([]))["capture_rooms"], "--capture-rooms is parsed")
+	var dev: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--new-game", "--no-labels", "--seed", "4", "--skip-to", "mon_walk", "--hearts", "2.5"]))
+	check(dev["new_game"] and dev["no_labels"] and dev["seed"] == 4 and dev["skip_to"] == "mon_walk" and dev["hearts_halves"] == 5, "the existing dev args still parse")
+	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))
+	var expect := {
+		"hallway_2f": ["Bulletin", "NationalCharter", "Window1", "StackedDesksA"],
+		"stationery": ["Counter", "DakjiShelf", "JjondeugiShelf", "CrayonRack", "GachaBody"],
+	}
+	for id in expect:
+		var room: Node = load(data["rooms"][id]).instantiate()
+		var names := room.get_children().map(func(c): return str(c.name))
+		check(expect[id].all(func(n): return names.has(n)), "%s has its dressing %s" % [id, str(expect[id])])
+		room.free()
+	# The dressing is plain props: no interactable was added, so the spot pool is unchanged.
+	var spot_nodes := 0
+	for id in data["rooms"]:
+		var room: Node = load(data["rooms"][id]).instantiate()
+		for c in room.get_children():
+			if c.has_method("interact") and not c.has_method("is_door") and c.spot_id != "":
+				spot_nodes += 1
+		room.free()
+	check(spot_nodes == 12, "still exactly 12 search-spot nodes in the rooms (%d)" % spot_nodes)
+
+
+func _test_import_and_dialogue() -> void:
+	print("Import: stale .dialogue and project.godot")
+	for file_name in DirAccess.get_files_at(DIALOGUE_DIR):
+		if file_name.get_extension() != "dialogue":
+			continue
+		var path := DIALOGUE_DIR.path_join(file_name)
+		var import_path := path + ".import"
+		check(FileAccess.file_exists(import_path), "%s has an .import file" % file_name)
+		check(FileAccess.get_modified_time(path) <= FileAccess.get_modified_time(import_path), "%s is not newer than its .import (re-run godot --headless --import)" % file_name)
+		var raw := FileAccess.get_file_as_string(path)
+		var compiled: DMCompilerResult = DMCompiler.compile_string(raw, path)
+		var imported = load(path)
+		var same_content: bool = compiled.errors.is_empty() and imported != null \
+				and var_to_str(imported.lines) == var_to_str(compiled.lines) \
+				and var_to_str(imported.cues) == var_to_str(compiled.cues)
+		check(same_content, "%s: the imported resource matches the raw text" % file_name)
+	# --import must leave project.godot exactly as it was (the Dialogue Manager's
+	# automatic translation-template update is switched off in project.godot).
+	var project_path := ProjectSettings.globalize_path("res://project.godot")
+	var before := FileAccess.get_file_as_bytes(project_path)
+	check(ProjectSettings.get_setting("dialogue_manager/editor/translations/UPDATE_TRANSLATION_TEMPLATES_AUTOMATICALLY", true) == false, "the plugin's automatic POT update is off")
+	var output := []
+	var code := OS.execute(OS.get_executable_path(), ["--headless", "--import", "--path", ProjectSettings.globalize_path("res://").trim_suffix("/")], output)
+	var after := FileAccess.get_file_as_bytes(project_path)
+	if after != before:
+		var restore := FileAccess.open(project_path, FileAccess.WRITE)
+		restore.store_buffer(before)
+		restore.close()
+	check(code == 0, "godot --headless --import exits cleanly (exit %d)" % code)
+	check(after == before, "godot --headless --import leaves project.godot byte-identical")

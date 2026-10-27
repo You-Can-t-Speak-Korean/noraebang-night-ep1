@@ -2,6 +2,8 @@
 # the day's finds into the search spots, and shows placeholder text.
 #   Capture one PNG per room (needs a real window, not --headless):
 #     godot --path . -- --capture-map
+#   Capture 1학년 3반 (whole room, then at its door with the keycap), 2층 복도, 빈 교실, 문방구:
+#     godot --path . -- --capture-rooms
 #   Capture the HUD (hearts 3.5, 눈치 3, DDEOK 12):
 #     godot --path . -- --capture-hud
 #   Capture the dialogue box at Choice 1 (second option highlighted):
@@ -25,6 +27,7 @@ const HudScene := preload("res://scenes/hud.tscn")
 const DialogueBoxScene := preload("res://scenes/ui/dialogue_box.tscn")
 const DirectorScript := preload("res://scripts/scene_director.gd")
 const SpawnDealerScript := preload("res://scripts/spawn_dealer.gd")
+const KeyPromptScript := preload("res://scripts/key_prompt.gd")
 const SKIP_TARGETS: Array[String] = ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon"]
 const MONDAY_CARD := "1979년 10월 29일 월요일"
 const SATURDAY_CARD := "1979년 11월 3일 토요일"
@@ -46,6 +49,8 @@ var director_time_scale := 1.0
 var title_hold := TITLE_HOLD
 var transitioning := false
 var room: Node3D = null
+## The "Enter" keycap over the nearest interactable; lives in the room, so it goes with it.
+var key_prompt: Node3D = null
 var room_id := ""
 var player: Node3D
 var rooms: Dictionary = {}
@@ -107,7 +112,7 @@ func _ready() -> void:
 	spawn_config = SpawnDealerScript.load_config()
 	var args := parse_launch_args(OS.get_cmdline_user_args())
 	_forced_seed = args["seed"]
-	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"]
+	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"]
 	labels_visible = not args["no_labels"]
 	capture_mode = capturing
 	if capturing:
@@ -144,17 +149,19 @@ func _ready() -> void:
 		_run_capture_dialogue()
 	elif args["capture_alley"]:
 		_run_capture_alley()
+	elif args["capture_rooms"]:
+		_run_capture_rooms()
 	elif begin_progress:
 		begin()
 
 
 ## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool,
-## "capture_dialogue": bool, "capture_alley": bool, "no_labels": bool,
+## "capture_dialogue": bool, "capture_alley": bool, "capture_rooms": bool, "no_labels": bool,
 ## "hearts_halves": int (-1 = none), "skip_to": String ("" = none)}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
-			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args,
+			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args, "capture_rooms": "--capture-rooms" in args,
 			"no_labels": "--no-labels" in args, "hearts_halves": -1, "skip_to": ""}
 	var at := args.find("--seed")
 	if at != -1:
@@ -250,6 +257,10 @@ func begin() -> void:
 			director.start_scene()
 
 
+func _process(_delta: float) -> void:
+	_sync_key_prompt()
+
+
 ## The player stands still while any of these is true.
 func update_lock() -> void:
 	if player == null:
@@ -257,6 +268,14 @@ func update_lock() -> void:
 	var scene_locked: bool = director != null and director.scene_locked
 	var dialogue_open: bool = dialogue_box != null and dialogue_box.is_open
 	player.movement_locked = _text_open or transitioning or _game_over or scene_locked or dialogue_open or end_card_shown
+	_sync_key_prompt()
+
+
+## The keycap shows above the nearest interactable, and only while movement is free.
+func _sync_key_prompt() -> void:
+	if key_prompt == null or not is_instance_valid(key_prompt) or player == null:
+		return
+	key_prompt.point_at(player.current_interactable, not player.movement_locked)
 
 
 func close_text() -> void:
@@ -603,6 +622,8 @@ func _load_room(id: String, spawn_name: String) -> void:
 	room = load(rooms[id]).instantiate()
 	room_id = id
 	add_child(room)
+	key_prompt = KeyPromptScript.new()
+	room.add_child(key_prompt)
 	player.configure_room(room)
 	var spawn: Node3D = room.get_spawn(spawn_name) if spawn_name != "" else null
 	if spawn == null:
@@ -713,6 +734,46 @@ func _run_capture_alley() -> void:
 	var lum := _mean_luminance(img)
 	var ok: bool = director.hyunjeong != null and lum >= 0.01
 	print("alley  %s  luminance %.4f  hyunjeong %s" % [path, lum, str(director.hyunjeong != null)])
+	print("adapter: ", RenderingServer.get_video_adapter_name())
+	get_tree().quit(0 if ok else 1)
+
+
+## The rooms dressed in build 3c: [room, spawn, file]. A spawn of "" stands in the middle of the
+## room, "right" 8 m right of it (the 2층 복도 is wider than the frame), a name stands at that door.
+const ROOM_SHOTS := [
+	["classroom_1_3", "", "classroom_1_3"],
+	["classroom_1_3", "from_hallway_1f", "classroom_1_3_door"],
+	["hallway_2f", "", "hallway_2f"],
+	["hallway_2f", "right", "hallway_2f_right"],
+	["empty_classroom", "", "empty_classroom"],
+	["stationery", "", "stationery"],
+]
+
+
+func _run_capture_rooms() -> void:
+	var dir := Shots.dir()
+	fade_time = 0.0
+	var ok := true
+	for shot in ROOM_SHOTS:
+		_load_room(shot[0], "" if shot[1] == "right" else shot[1])
+		if shot[1] == "":
+			player.place((room.bounds_left + room.bounds_right) / 2.0, 0)
+		elif shot[1] == "right":
+			player.place((room.bounds_left + room.bounds_right) / 2.0 + 8.0, 0)
+		room.update_camera()
+		for i in 8:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var path := "%s/%s.png" % [dir, shot[2]]
+		img.save_png(path)
+		img.convert(Image.FORMAT_RGB8)
+		img.resize(480, 270)
+		var lum := _mean_luminance(img)
+		print("%s  %s  luminance %.4f  keycap %s" % [shot[2], path, lum, str(key_prompt.visible)])
+		if lum < 0.01:
+			print("FAIL: %s is (nearly) black" % shot[2])
+			ok = false
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if ok else 1)
 

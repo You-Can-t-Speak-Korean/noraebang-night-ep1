@@ -1,7 +1,6 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1"]
-[ext_resource type="FontFile" path="res://art/fonts/NotoSansKR/NotoSansKR-VF.ttf" id="2"]
 
 [sub_resource type="CapsuleMesh" id="Capsule"]
 radius = 0.25
@@ -29,14 +28,3 @@ monitorable = false
 [node name="Shape" type="CollisionShape3D" parent="InteractArea"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 shape = SubResource("Reach")
-
-[node name="Prompt" type="Label3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.55, 0)
-visible = false
-billboard = 1
-no_depth_test = true
-pixel_size = 0.006
-text = "Enter"
-font = ExtResource("2")
-font_size = 56
-outline_size = 12

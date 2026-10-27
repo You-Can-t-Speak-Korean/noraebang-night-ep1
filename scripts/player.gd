@@ -9,7 +9,7 @@ const TuningScript := preload("res://scripts/tuning.gd")
 @export var walk_speed := 4.5
 @export var lane_speed := 8.0
 
-## Dialogue (later) sets this; it blocks walking, lane steps and interaction prompts.
+## Dialogue (later) sets this; it blocks walking, lane steps and the interaction cue.
 var movement_locked := false
 var walk_min_x := -INF
 var walk_max_x := INF
@@ -21,7 +21,6 @@ var current_interactable: Node3D = null
 
 var _near: Array[Node3D] = []
 
-@onready var _prompt: Label3D = $Prompt
 @onready var _area: Area3D = $InteractArea
 
 
@@ -91,4 +90,3 @@ func _update_interactable() -> void:
 		if d < best:
 			best = d
 			current_interactable = it
-	_prompt.visible = current_interactable != null and not movement_locked
