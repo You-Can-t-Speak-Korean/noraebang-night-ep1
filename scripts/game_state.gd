@@ -261,7 +261,7 @@ func end_fight(boss_id: String, outcome: String, score: int) -> bool:
 		scores[boss_id] = score
 	if outcome == "revenge" or not outcomes.has(boss_id):
 		outcomes[boss_id] = outcome
-	if outcome == "revenge":
+	if outcome == "revenge" and hearts_halves < hearts_max_halves:
 		heal(hearts_max_halves - hearts_halves)
 	return true
 

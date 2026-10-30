@@ -1,0 +1,342 @@
+{
+	"id": "eunju_dalnim",
+	"title": "달님은 계란 후라이",
+	"boss": "eunju",
+	"countdown": 5.0,
+	"length": 62.0,
+	"phases": [
+		{
+			"phase": 1,
+			"section": "Verse",
+			"blanks": [
+				{
+					"n": 1,
+					"time": 5.0,
+					"line": "하얀 흰자 가운데 ___ 노른자",
+					"options": [
+						"노란",
+						"파란",
+						"까만"
+					],
+					"answer": "노란",
+					"teaches": "Colour adjectives",
+					"attack": "booger_flick",
+					"counter": "booger_flick_slapstick"
+				},
+				{
+					"n": 2,
+					"time": 14.0,
+					"line": "하늘은 커다란 ___",
+					"options": [
+						"프라이팬",
+						"냉장고",
+						"숟가락"
+					],
+					"answer": "프라이팬",
+					"teaches": "Kitchen nouns",
+					"attack": "soda_bottle_rocket",
+					"counter": "soda_bottle_rocket_slapstick"
+				},
+				{
+					"n": 3,
+					"time": 17.0,
+					"line": "기름이 ___, 별들이 톡톡 튀어요",
+					"options": [
+						"지글지글",
+						"멍멍",
+						"엉엉"
+					],
+					"answer": "지글지글",
+					"teaches": "의성어",
+					"attack": "candle_hairspray_flame",
+					"counter": "candle_hairspray_flame_slapstick"
+				}
+			]
+		},
+		{
+			"phase": 2,
+			"section": "Chorus",
+			"blanks": [
+				{
+					"n": 4,
+					"time": 23.0,
+					"line": "별은 하얀 ___이에요, 솔솔 뿌려요",
+					"options": [
+						"소금",
+						"고추장",
+						"김치"
+					],
+					"answer": "소금",
+					"teaches": "Colour clue → noun",
+					"attack": "thumbtack_party_popper",
+					"counter": "thumbtack_party_popper_slapstick"
+				},
+				{
+					"n": 5,
+					"time": 29.0,
+					"line": "밤마다 ___ 달을 먹어요?",
+					"options": [
+						"누가",
+						"누구를",
+						"언제"
+					],
+					"answer": "누가",
+					"teaches": "누가 (subject)",
+					"attack": "cake_knife_throw",
+					"counter": "cake_knife_throw_slapstick"
+				},
+				{
+					"n": 6,
+					"time": 32.0,
+					"line": "아침이 되면 하늘에 달이 ___",
+					"options": [
+						"없어요",
+						"있어요",
+						"많아요"
+					],
+					"answer": "없어요",
+					"teaches": "있다 / 없다",
+					"attack": "party_hat_cone_stab",
+					"counter": "party_hat_cone_stab_slapstick"
+				}
+			]
+		},
+		{
+			"phase": 3,
+			"section": "Bridge",
+			"blanks": [
+				{
+					"n": 7,
+					"time": 35.0,
+					"line": "어젯밤에 나는 ___",
+					"options": [
+						"봤어요",
+						"봐요",
+						"볼 거예요"
+					],
+					"answer": "봤어요",
+					"teaches": "Past tense -았/었-",
+					"attack": "paper_doll_blade_storm",
+					"counter": "paper_doll_blade_storm_gory"
+				},
+				{
+					"n": 8,
+					"time": 44.0,
+					"line": "이제 하늘이 ___",
+					"options": [
+						"깜깜해요",
+						"밝아요",
+						"따뜻해요"
+					],
+					"answer": "깜깜해요",
+					"teaches": "Adjectives",
+					"attack": "mic_cord_electrocution",
+					"counter": "mic_cord_electrocution_gory"
+				}
+			]
+		},
+		{
+			"phase": 4,
+			"section": "Final chorus",
+			"blanks": [
+				{
+					"n": 9,
+					"time": 50.0,
+					"line": "배가 고파요, 나는 달을 ___",
+					"options": [
+						"먹고 싶어요",
+						"먹었어요",
+						"먹지 마세요"
+					],
+					"answer": "먹고 싶어요",
+					"teaches": "-고 싶다",
+					"attack": "booger_sniper",
+					"counter": "booger_sniper_gory"
+				},
+				{
+					"n": 10,
+					"time": 56.0,
+					"line": "달이 다시 ___ 한 입에 꿀꺽!",
+					"options": [
+						"뜨면",
+						"뜨지만",
+						"떴어"
+					],
+					"answer": "뜨면",
+					"teaches": "Condition -(으)면",
+					"attack": "color_tv_drop",
+					"counter": "color_tv_drop_gory"
+				}
+			]
+		}
+	],
+	"lines": [
+		{
+			"kind": "intro",
+			"phase": 1,
+			"time": 0.0,
+			"text": "자, 다 조용히 해! 내 노래야!",
+			"speaker": "은주"
+		},
+		{
+			"kind": "lyric",
+			"phase": 1,
+			"time": 2.0,
+			"text": "밤하늘을 보세요, 동그란 게 떴어요"
+		},
+		{
+			"kind": "lyric",
+			"phase": 1,
+			"time": 5.0,
+			"text": "하얀 흰자 가운데 ___ 노른자",
+			"blank": 1
+		},
+		{
+			"kind": "lyric",
+			"phase": 1,
+			"time": 8.0,
+			"text": "엄마는 달님이래요, 선생님도 달님이래요"
+		},
+		{
+			"kind": "lyric",
+			"phase": 1,
+			"time": 11.0,
+			"text": "아니에요, 아니에요, 그건 계란 후라이예요"
+		},
+		{
+			"kind": "lyric",
+			"phase": 1,
+			"time": 14.0,
+			"text": "하늘은 커다란 ___",
+			"blank": 2
+		},
+		{
+			"kind": "lyric",
+			"phase": 1,
+			"time": 17.0,
+			"text": "기름이 ___, 별들이 톡톡 튀어요",
+			"blank": 3
+		},
+		{
+			"kind": "lyric",
+			"phase": 2,
+			"time": 20.0,
+			"text": "달님은 계란 후라이, 계란 후라이"
+		},
+		{
+			"kind": "lyric",
+			"phase": 2,
+			"time": 23.0,
+			"text": "별은 하얀 ___이에요, 솔솔 뿌려요",
+			"blank": 4
+		},
+		{
+			"kind": "lyric",
+			"phase": 2,
+			"time": 26.0,
+			"text": "달님은 계란 후라이, 계란 후라이"
+		},
+		{
+			"kind": "lyric",
+			"phase": 2,
+			"time": 29.0,
+			"text": "밤마다 ___ 달을 먹어요?",
+			"blank": 5
+		},
+		{
+			"kind": "lyric",
+			"phase": 2,
+			"time": 32.0,
+			"text": "아침이 되면 하늘에 달이 ___",
+			"blank": 6
+		},
+		{
+			"kind": "lyric",
+			"phase": 3,
+			"time": 35.0,
+			"text": "어젯밤에 나는 ___",
+			"blank": 7
+		},
+		{
+			"kind": "lyric",
+			"phase": 3,
+			"time": 38.0,
+			"text": "하늘에서 노른자가 톡 터졌어요"
+		},
+		{
+			"kind": "lyric",
+			"phase": 3,
+			"time": 41.0,
+			"text": "노란 비가 주룩주룩, 지붕 위에 뚝뚝"
+		},
+		{
+			"kind": "lyric",
+			"phase": 3,
+			"time": 44.0,
+			"text": "이제 하늘이 ___",
+			"blank": 8
+		},
+		{
+			"kind": "lyric",
+			"phase": 4,
+			"time": 47.0,
+			"text": "달님은 계란 후라이, 계란 후라이"
+		},
+		{
+			"kind": "lyric",
+			"phase": 4,
+			"time": 50.0,
+			"text": "배가 고파요, 나는 달을 ___",
+			"blank": 9
+		},
+		{
+			"kind": "lyric",
+			"phase": 4,
+			"time": 53.0,
+			"text": "달님은 계란 후라이, 계란 후라이"
+		},
+		{
+			"kind": "lyric",
+			"phase": 4,
+			"time": 56.0,
+			"text": "달이 다시 ___ 한 입에 꿀꺽!",
+			"blank": 10
+		},
+		{
+			"kind": "outro",
+			"phase": 4,
+			"time": 59.0,
+			"text": "잘 먹겠습니다.",
+			"speaker": "은주"
+		}
+	],
+	"loaded": [
+		{
+			"card": "dad_country",
+			"blank": 4,
+			"extra_option": "설탕"
+		},
+		{
+			"card": "mom_salary",
+			"blank": 6,
+			"extra_option": "적어요"
+		},
+		{
+			"card": "dad_drinking",
+			"blank": 9,
+			"extra_option": "마시고 싶어요"
+		}
+	],
+	"outcomes": {
+		"revenge": {
+			"card": "[placeholder] REVENGE: carnage card"
+		},
+		"survival": {
+			"card": "[placeholder] SURVIVAL: quelled card"
+		}
+	},
+	"game_over": {
+		"anchor": "문태식",
+		"line": "오늘 저녁, 국민학교 1학년 장보람 양이 생일 파티에서 사망했습니다. 다음 소식입니다."
+	}
+}

@@ -8,7 +8,7 @@
 # values <= 0.
 # The world test with a save from a newer version adds one more push_error
 # ("World: could not load the save ...").
-# Bad --seed / --hearts / --skip-to values push_warnings by design.
+# Bad --seed / --hearts / --skip-to / --fight / --fight-auto values push_warnings by design.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends SceneTree
@@ -67,6 +67,14 @@ func _initialize() -> void:
 	_test_empty_classroom()
 	_test_3c_files()
 	_test_import_and_dialogue()
+	var project_path := ProjectSettings.globalize_path("res://project.godot")
+	var project_before := FileAccess.get_file_as_bytes(project_path)
+	_test_song_json()
+	_test_song_clock()
+	_test_fight_logic()
+	await _test_fight_scene()
+	await _test_fight_world()
+	check(FileAccess.get_file_as_bytes(project_path) == project_before, "the fight tests leave project.godot byte-identical")
 	_clean_world_saves()
 	print("\n%d checks, %d failed" % [checks, failures])
 	quit(1 if failures > 0 else 0)
@@ -2855,3 +2863,617 @@ func _test_import_and_dialogue() -> void:
 		restore.close()
 	check(code == 0, "godot --headless --import exits cleanly (exit %d)" % code)
 	check(after == before, "godot --headless --import leaves project.godot byte-identical")
+
+
+# ── Build 4a: the fight player core ─────────────────────────────────────
+
+const SONG_PATH := "res://data/songs/eunju_dalnim.json"
+const SHEET_PATH := "res://docs/songs/songsheet-01-eunju-dalnim-v0.2.md"
+const FIGHT_SAVE_DIR := "user://test_fight_saves"
+
+
+## A clock that records what the fight asks of it (it only knows the interface).
+class RecordingClock extends SongClock:
+	var calls: Array[String] = []
+	var pos := 0.0
+	var running := false
+
+	func play() -> void:
+		calls.append("play")
+		pos = 0.0
+		running = true
+
+	func pause() -> void:
+		calls.append("pause")
+		running = false
+
+	func resume() -> void:
+		calls.append("resume")
+		running = true
+
+	func seek(seconds: float) -> void:
+		calls.append("seek")
+		pos = seconds
+
+	func tick(delta: float) -> void:
+		if running:
+			pos += delta
+
+	func get_position() -> float:
+		return pos
+
+	func is_playing() -> bool:
+		return running
+
+
+func _has_hangul(s: String) -> bool:
+	for i in s.length():
+		var c := s.unicode_at(i)
+		if c >= 0xAC00 and c <= 0xD7A3:
+			return true
+	return false
+
+
+func _strings_of(v: Variant, out: Array) -> void:
+	if v is String:
+		out.append(v)
+	elif v is Array:
+		for x in v:
+			_strings_of(x, out)
+	elif v is Dictionary:
+		for k in v:
+			_strings_of(k, out)
+			_strings_of(v[k], out)
+
+
+func _test_song_json() -> void:
+	print("Song file vs song sheet")
+	check(FileAccess.file_exists(SHEET_PATH), "the song sheet is in docs/songs")
+	check(FileAccess.file_exists(SONG_PATH), "data/songs/eunju_dalnim.json exists")
+	var sheet := SongSheet.parse(FileAccess.get_file_as_string(SHEET_PATH))
+	check(sheet["errors"].is_empty(), "the song sheet parses (title, lyrics, anchor)")
+	var song: Dictionary = SongData.load_file(SONG_PATH)
+	check(not song.is_empty() and SongData.validate(song).is_empty(), "the song file validates")
+	check(song["id"] == "eunju_dalnim" and song["boss"] == "eunju" and is_equal_approx(song["countdown"], 5.0), "id, boss, countdown 5.0")
+	check(song["title"] == sheet["title"], "title matches the sheet")
+
+	var blanks := SongData.flat_blanks(song)
+	check(blanks.size() == 10, "10 blanks")
+	var split := []
+	for phase in song["phases"]:
+		split.append(phase["blanks"].size())
+	check(split == [3, 3, 2, 2] and song["phases"].size() == 4, "blanks split 3/3/2/2 across 4 phases")
+	var sections := []
+	for phase in song["phases"]:
+		sections.append(phase["section"])
+	check(sections == ["Verse", "Chorus", "Bridge", "Final chorus"], "phase sections")
+	var lyric_of := {}
+	for l in sheet["lyrics"]:
+		if l["blank"] != 0:
+			lyric_of[l["blank"]] = l
+	for b in blanks:
+		var n: int = b["n"]
+		var doc: Dictionary = sheet["blanks"][n]
+		check(b["options"].size() == 3 and b["options"].has(b["answer"]), "blank %d: 3 options, the answer is one of them" % n)
+		check(b["options"] == doc["options"] and b["answer"] == doc["answer"], "blank %d: options and answer match the sheet" % n)
+		check(b["line"] == lyric_of[n]["text"] and b["line"].contains("___") and b["line"].count("___") == 1, "blank %d: line matches the lyrics, one ___" % n)
+		check(b["teaches"] == doc["teaches"], "blank %d: teaches matches" % n)
+		check(b["phase"] == SongSheet.phase_of(doc["phase_name"]), "blank %d: phase matches" % n)
+	check(blanks[4]["line"] == "밤마다 ___ 달을 먹어요?", "blank 5 keeps the edited line")
+
+	# Lines: all of them, in order, with the spoken intro and outro.
+	var lines: Array = song["lines"]
+	check(lines.size() == sheet["lyrics"].size() and lines.size() == 21, "21 lines: 19 sung plus the spoken intro and outro")
+	var same_lines := true
+	for i in lines.size():
+		var d: Dictionary = sheet["lyrics"][i]
+		if lines[i]["text"] != d["text"] or lines[i]["kind"] != d["kind"] or lines[i]["phase"] != d["phase"] \
+				or lines[i].get("blank", 0) != d["blank"] or lines[i].get("speaker", "") != d["speaker"]:
+			same_lines = false
+	check(same_lines, "every line matches the sheet in order (text, kind, phase, blank, speaker)")
+	check(lines[0]["kind"] == "intro" and lines[0]["text"] == "자, 다 조용히 해! 내 노래야!" and lines[0]["speaker"] == "은주", "spoken intro")
+	check(lines[-1]["kind"] == "outro" and lines[-1]["text"] == "잘 먹겠습니다.", "spoken outro")
+	var lyric_lines := lines.filter(func(l): return l["kind"] == "lyric")
+	check(lyric_lines.size() == 19, "19 sung lines")
+	var times_ok := true
+	for i in range(1, lines.size()):
+		if lines[i]["time"] < lines[i - 1]["time"]:
+			times_ok = false
+	check(times_ok, "line times never go backwards")
+	var cfg: Dictionary = TuningScript.fight_config()
+	var even := is_equal_approx(lines[1]["time"], cfg["first_line_time"])
+	for i in range(2, lines.size()):
+		even = even and is_equal_approx(lines[i]["time"] - lines[i - 1]["time"], cfg["line_gap"])
+	check(even, "placeholder times are evenly spaced by tuning.json (first line %.1fs, gap %.1fs)" % [cfg["first_line_time"], cfg["line_gap"]])
+	var blank_times_ok := true
+	for b in blanks:
+		for l in lines:
+			if l.get("blank", 0) == b["n"] and not is_equal_approx(l["time"], b["time"]):
+				blank_times_ok = false
+	check(blank_times_ok, "a blank's time is its line's time")
+	check(song["length"] > lines[-1]["time"], "the song is longer than its last line")
+
+	# Attack and counter ids.
+	var snake := RegEx.create_from_string("^[a-z][a-z0-9]*(_[a-z0-9]+)*$")
+	var ids := {}
+	var ids_ok := true
+	var reg := FightRegistry.new()
+	for b in blanks:
+		for key in ["attack", "counter"]:
+			ids_ok = ids_ok and snake.search(b[key]) != null
+			ids[b[key]] = true
+		ids_ok = ids_ok and (b["counter"].ends_with("_slapstick") or b["counter"].ends_with("_gory")) and b["counter"].begins_with(b["attack"])
+		ids_ok = ids_ok and not reg.attack(b["attack"])["placeholder"] and not reg.counter(b["counter"])["placeholder"]
+	check(ids_ok, "attack and counter ids are snake_case, paired, and in the registry")
+	check(ids.size() == 20, "20 distinct ids")
+	check(reg.attack("no_such_attack")["placeholder"] and reg.counter("no_such_counter")["placeholder"], "an unknown id falls back to a placeholder")
+	check(reg.attack("no_such_attack")["size"] is Vector3 and reg.counter("no_such_counter")["tone"] == "slapstick", "the fallback is usable")
+	var gory := blanks.filter(func(b): return b["counter"].ends_with("_gory")).map(func(b): return int(b["n"]))
+	check(gory == [7, 8, 9, 10], "bridge and final counters are gory (the sheet's 🩸), the rest slapstick")
+
+	# Loaded blanks: stored, unused.
+	check(song["loaded"].size() == 3, "three loaded cards stored")
+	var loaded_ok := true
+	for item in song["loaded"]:
+		var match_doc := false
+		for d in sheet["loaded"]:
+			if d["blank"] == item["blank"] and d["extra_option"] == item["extra_option"]:
+				match_doc = true
+		loaded_ok = loaded_ok and match_doc and _gs().hand.has(item["card"])
+	check(loaded_ok, "loaded: card ids are in the hand, blank numbers and extra options match the sheet")
+	check(blanks.all(func(b): return b["options"].size() == 3), "loaded blanks are not applied yet (every blank still has 3 options)")
+
+	# Game over anchor and outcomes.
+	check(song["game_over"]["line"] == sheet["anchor"] and song["game_over"]["line"] == "오늘 저녁, 국민학교 1학년 장보람 양이 생일 파티에서 사망했습니다. 다음 소식입니다.", "game-over anchor line is verbatim")
+	check(song["game_over"]["anchor"] == "문태식", "the anchor is 문태식")
+	check(song["outcomes"].has("revenge") and song["outcomes"].has("survival"), "outcomes: revenge and survival placeholders")
+
+	# Korean only from the sheet.
+	var allowed := {"문태식": true}
+	for l in sheet["lyrics"]:
+		allowed[l["text"]] = true
+		allowed[l["speaker"]] = true
+	for n in sheet["blanks"]:
+		var doc: Dictionary = sheet["blanks"][n]
+		allowed[doc["teaches"]] = true
+		allowed[doc["answer"]] = true
+		for o in doc["options"]:
+			allowed[o] = true
+	for item in sheet["loaded"]:
+		allowed[item["extra_option"]] = true
+	allowed[sheet["title"]] = true
+	allowed[sheet["anchor"]] = true
+	var all_strings := []
+	_strings_of(song, all_strings)
+	var stray := []
+	for s in all_strings:
+		if _has_hangul(s) and not allowed.has(s):
+			stray.append(s)
+	check(stray.is_empty(), "every Korean string in the song file is from the sheet %s" % str(stray))
+
+
+func _test_song_clock() -> void:
+	print("Song clock")
+	var c: SongClock = SilentSongClock.new()
+	check(not c.is_playing() and c.get_position() == 0.0, "starts stopped at 0")
+	c.play()
+	c.tick(1.5)
+	check(c.is_playing() and is_equal_approx(c.get_position(), 1.5), "plays: tick advances the position")
+	c.pause()
+	c.tick(3.0)
+	check(not c.is_playing() and is_equal_approx(c.get_position(), 1.5), "paused: the position holds")
+	c.resume()
+	c.tick(0.5)
+	check(is_equal_approx(c.get_position(), 2.0), "resume continues from where it paused")
+	c.seek(10.0)
+	check(is_equal_approx(c.get_position(), 10.0), "seek")
+	c.play()
+	check(c.get_position() == 0.0, "play starts from the top")
+	var source := FileAccess.get_file_as_string("res://scripts/fight.gd")
+	check(source.find("AudioStream") == -1 and source.find("AudioServer") == -1, "no audio in the fight code")
+	check(source.count("SilentSongClock") == 1, "the fight code names the silent clock once, as the default")
+
+
+func _tiny_song(count: int) -> Dictionary:
+	var blanks := []
+	for i in count:
+		blanks.append({"n": i + 1, "time": 1.0 + i, "line": "x ___", "options": ["a", "b", "c"], "answer": "a", "attack": "atk", "counter": "ctr"})
+	return {"boss": "tiny", "phases": [{"phase": 1, "section": "Verse", "blanks": blanks}]}
+
+
+func _right_all(logic: FightLogic) -> void:
+	while logic.has_blank():
+		logic.answer(logic.current()["answer"])
+
+
+func _test_fight_logic() -> void:
+	print("Fight logic: scoring, penalty, outcomes")
+	var song: Dictionary = SongData.load_file(SONG_PATH)
+
+	# Scoring.
+	var gs := make_gs()
+	gs.begin_fight("eunju")
+	var logic := FightLogic.new(song, 5, gs)
+	check(logic.total() == 10 and logic.score() == 0, "10 blanks, score 0 before any answer")
+	var r1 := logic.answer(logic.current()["answer"])
+	check(r1["right"] and gs.hearts_halves == 10 and logic.correct == 1, "a right answer costs nothing")
+	logic.answer(logic.current()["options"][0] if logic.current()["options"][0] != logic.current()["answer"] else logic.current()["options"][1])
+	check(gs.hearts_halves == 8 and logic.wrong == 1, "a wrong answer costs exactly 1 heart (2 halves)")
+	var r3 := logic.answer("")
+	check(r3["timeout"] and not r3["right"] and gs.hearts_halves == 6, "a timeout counts as wrong and costs 1 heart")
+	check(logic.results[2]["timeout"] and logic.wrong == 2, "the timeout is recorded as wrong")
+	while logic.has_blank():
+		logic.answer(logic.current()["answer"])
+	check(logic.correct == 8 and logic.score() == 80, "8 right of 10 = 80")
+	gs.free()
+	for case in [[3, 0, 100], [3, 1, 67], [3, 2, 33], [3, 3, 0], [7, 3, 57], [10, 5, 50]]:
+		var g := make_gs()
+		g.begin_fight("tiny")
+		var lg := FightLogic.new(_tiny_song(case[0]), 1, g)
+		lg.correct = case[0] - case[1]
+		lg.index = case[0]
+		check(lg.score() == case[2], "score for %d of %d right is round(100x/n) = %d" % [case[0] - case[1], case[0], case[2]])
+		g.free()
+
+	# Revenge: no damage.
+	gs = make_gs()
+	gs.damage(4)  # arrived hurt: 3 hearts
+	gs.begin_fight("eunju")
+	logic = FightLogic.new(song, 5, gs)
+	_right_all(logic)
+	check(logic.wrong == 0 and gs.hearts_halves == 6 and logic.outcome() == "revenge", "no wrong answers: revenge, no hearts lost")
+	var res := logic.finish()
+	check(res == {"score": 100, "outcome": "revenge"}, "revenge result is 100 / revenge")
+	check(gs.hearts_halves == 10, "revenge restores hearts to full (5)")
+	check(gs.outcomes["eunju"] == "revenge" and gs.scores["eunju"] == 100 and not gs.in_fight, "revenge and the score are saved in GameState, the fight is over")
+	gs.free()
+
+	# Revenge from full hearts leaves them at 5.
+	gs = make_gs()
+	gs.begin_fight("eunju")
+	logic = FightLogic.new(song, 5, gs)
+	_right_all(logic)
+	logic.finish()
+	check(gs.hearts_halves == 10 and gs.outcomes["eunju"] == "revenge", "revenge from full hearts: still 5")
+	gs.free()
+
+	# Survival: damage taken, at least half a heart left, nothing restored.
+	gs = make_gs()
+	gs.begin_fight("eunju")
+	logic = FightLogic.new(song, 5, gs)
+	while logic.has_blank():
+		var n: int = logic.current()["n"]
+		logic.answer("" if n % 3 == 0 else logic.current()["answer"])
+	check(logic.wrong == 3 and gs.hearts_halves == 4 and not logic.lost() and logic.finished(), "3 wrong: 2 hearts left, still standing")
+	check(logic.outcome() == "survival" and logic.score() == 70, "survival, 70")
+	logic.finish()
+	check(gs.hearts_halves == 4, "survival restores nothing")
+	check(gs.outcomes["eunju"] == "survival" and gs.scores["eunju"] == 70, "survival and the score are saved")
+	gs.free()
+
+	# Survival on the last half heart.
+	gs = make_gs()
+	gs.damage(5)  # 5 halves
+	gs.begin_fight("eunju")
+	logic = FightLogic.new(song, 5, gs)
+	var k := 0
+	while logic.has_blank():
+		logic.answer("" if k < 2 else logic.current()["answer"])
+		k += 1
+	check(gs.hearts_halves == 1 and not logic.lost() and logic.finish()["outcome"] == "survival", "half a heart left is still a survival win")
+	gs.free()
+
+	# Game over at 0 hearts: the fight game over, never the outside-fight death reset.
+	gs = make_gs()
+	gs.lose_secret("pride", "eunju")
+	gs.set_progress("scene_09")
+	gs.add_nunchi(3)
+	gs.damage(8)  # 2 halves
+	gs.begin_fight("eunju")
+	var counts := watch(gs, ["fight_lost", "player_died", "state_reset"])
+	logic = FightLogic.new(song, 5, gs)
+	var over := logic.answer("")
+	check(over["lost"] and gs.hearts_halves == 0 and logic.lost(), "the last heart gone: lost")
+	check(counts["fight_lost"] == 1 and counts["player_died"] == 0 and counts["state_reset"] == 0, "in a fight, 0 hearts fires fight_lost, not player_died or a reset")
+	check(gs.progress == "scene_09" and not gs.has_secret("pride") and gs.in_fight, "no death reset: progress and cards kept, still in the fight")
+	check(not logic.finished() and logic.finish().is_empty() and gs.in_fight and not gs.outcomes.has("eunju"), "a lost fight records no win")
+	# Retry: the snapshot comes back, the fight starts over, the options shuffle again.
+	var first_order := []
+	var second_order := []
+	var fresh := FightLogic.new(song, 5, gs)
+	for b in fresh.blanks:
+		first_order.append(fresh.options_for(b))
+	check(gs.retry_fight(), "retry_fight works after the loss")
+	logic.restart(true)
+	check(gs.hearts_halves == 2 and gs.nunchi == 3, "retry restores the fight-start hearts and 눈치")
+	check(logic.index == 0 and logic.correct == 0 and logic.wrong == 0 and logic.results.is_empty(), "retry restarts at blank 1 with a clean sheet")
+	for b in logic.blanks:
+		second_order.append(logic.options_for(b))
+	check(first_order != second_order, "a retry reshuffles the options")
+	gs.free()
+
+	# Shuffle: a permutation, stable per seed and attempt, different per seed.
+	gs = make_gs()
+	var la := FightLogic.new(song, 11, gs)
+	var lb := FightLogic.new(song, 11, gs)
+	var lc := FightLogic.new(song, 12, gs)
+	var perm_ok := true
+	var same_ab := true
+	var differs_c := false
+	for b in la.blanks:
+		var oa := la.options_for(b)
+		var sorted := oa.duplicate()
+		sorted.sort()
+		var orig: Array = b["options"].duplicate()
+		orig.sort()
+		perm_ok = perm_ok and sorted == orig
+		same_ab = same_ab and oa == lb.options_for(b) and oa == la.options_for(b)
+		differs_c = differs_c or oa != lc.options_for(b)
+	check(perm_ok, "the shuffled options are the same three options")
+	check(same_ab, "same seed, same order, every call")
+	check(differs_c, "another seed shuffles differently")
+	var moved := false
+	for b in la.blanks:
+		var sheet_order: Array[String] = []
+		for o in b["options"]:
+			sheet_order.append(str(o))
+		moved = moved or la.options_for(b) != sheet_order
+	check(moved, "the options are actually shuffled, not left in sheet order")
+	gs.free()
+
+	# A custom wrong-answer cost comes from tuning.
+	check(TuningScript.fight_config()["wrong_halves"] == 2, "tuning.json: a wrong answer costs 2 halves")
+
+
+## A fight scene on the autoload GameState, stepped by hand.
+func _make_fight(seed_number := 3, auto := "", clock: SongClock = null) -> Node3D:
+	var song: Dictionary = SongData.load_file(SONG_PATH)
+	var fight: Node3D = load("res://scenes/fight.tscn").instantiate()
+	fight.setup(song, seed_number, auto, true, clock)
+	root.add_child(fight)
+	return fight
+
+
+func _press_confirm(node: Node) -> void:
+	var e := InputEventAction.new()
+	e.action = "confirm"
+	e.pressed = true
+	node._unhandled_input(e)
+
+
+func _test_fight_scene() -> void:
+	print("Fight scene")
+	var gs := _gs()
+	gs.new_game()
+	gs.begin_fight("eunju")
+	var fight := _make_fight()
+	await _frames(2)
+	check(fight.state == fight.State.PLAYING and fight.clock is SilentSongClock and fight.clock.is_playing(), "starts playing on the silent clock")
+	check(fight.get_node_or_null("Arena/Eunju") != null and fight.get_node_or_null("Arena/Boram") != null and fight.get_node_or_null("Arena/Banjugi") != null, "gray-box room: 은주, 보람, 반주기")
+	var dev := get_nodes_in_group("dev_labels").filter(func(n): return fight.is_ancestor_of(n))
+	check(dev.size() >= 5, "the usual dev labels are in the dev_labels group")
+	fight.step(1.0)
+	check(is_equal_approx(fight.clock.get_position(), 1.0), "the clock runs while playing")
+
+	# The freeze at blank 1.
+	check(fight.play_to_freeze(), "a freeze comes")
+	check(fight.state == fight.State.FREEZE and is_equal_approx(fight.clock.get_position(), 5.0), "frozen at blank 1's time (5.0s)")
+	check(not fight.clock.is_playing(), "the clock is paused at the blank")
+	check(fight.options.size() == 3 and fight.options.has("노란") and fight.get_node("Arena/Attack") != null, "3 options shown, an attack object is out")
+	var label: Label3D = fight.get_node("Arena/Attack/AttackId")
+	check(label.text == "booger_flick", "the attack object is labelled with its attack id")
+	var x0: float = fight.get_node("Arena/Attack").position.x
+	var t0: float = fight.freeze_left
+	fight.step(2.0)
+	check(is_equal_approx(fight.freeze_left, t0 - 2.0) and fight.get_node("Arena/Attack").position.x < x0 - 1.0, "the attack creeps toward 보람 and the timer counts down")
+	check(is_equal_approx(fight.clock.get_position(), 5.0), "the song stays frozen while the attack creeps")
+	check(fight._timer_label.visible and fight._timer_label.text == "%.1f" % fight.freeze_left, "the timer is visible")
+	check(fight._line_labels.any(func(l): return l.text.contains("[ ____ ]")), "the lyric line shows the blank on the 반주기")
+
+	# Navigation: W/S wrap, Enter picks.
+	var up := InputEventAction.new()
+	up.action = "ui_up"
+	up.pressed = true
+	fight._unhandled_input(up)
+	check(fight.selected == 2, "W / up wraps from the first option to the last")
+	var down := InputEventAction.new()
+	down.action = "ui_down"
+	down.pressed = true
+	fight._unhandled_input(down)
+	check(fight.selected == 0, "S / down moves on")
+	fight.selected = fight.options.find("노란")
+	var hearts_before: int = gs.hearts_halves
+	_press_confirm(fight)
+	check(fight.state == fight.State.BEAT and fight.last_result["right"], "Enter picks the highlighted option; 노란 is right")
+	check(fight._banner.text.contains("booger_flick_slapstick"), "a right answer shows the counter id as a placeholder beat")
+	check(gs.hearts_halves == hearts_before and fight.bursts == 0, "no heart lost, no blood on a right answer")
+	fight.finish_beat()
+	check(fight.state == fight.State.PLAYING and fight.clock.is_playing() and fight._attack == null, "the song continues after the counter")
+
+	# Wrong answer.
+	fight.play_to_freeze()
+	check(fight.logic.current()["n"] == 2 and is_equal_approx(fight.clock.get_position(), 14.0), "blank 2 freezes at 14.0s")
+	var wrong_index: int = fight.options.find("냉장고")
+	fight.pick(wrong_index)
+	check(not fight.last_result["right"] and gs.hearts_halves == 8, "a wrong answer costs 1 heart")
+	check(fight.bursts == 1 and fight.flashes == 1, "the blood burst and flash fire")
+	check(fight._banner.text.contains("프라이팬"), "the correct answer is shown")
+	fight.finish_beat()
+	check(fight.state == fight.State.PLAYING, "then the song continues")
+
+	# Timeout.
+	fight.play_to_freeze()
+	for i in 200:
+		if fight.state == fight.State.FREEZE:
+			fight.step(0.05)
+	check(fight.last_result["timeout"] and not fight.last_result["right"] and gs.hearts_halves == 6, "the attack reaching 보람 is a timeout: wrong, -1 heart")
+	check(fight.bursts == 2, "the timeout bursts too")
+	fight.queue_free()
+	await _frames(2)
+
+	# A clock injected through setup: the fight only uses the interface.
+	gs.new_game()
+	gs.begin_fight("eunju")
+	var rec := RecordingClock.new()
+	fight = _make_fight(3, "", rec)
+	await _frames(1)
+	fight.play_to_freeze()
+	check(fight.clock == rec and rec.calls.has("play") and rec.calls.has("pause") and is_equal_approx(rec.pos, 5.0), "the fight drives a replacement clock through play/pause/seek/tick")
+	fight.pick_right()
+	fight.finish_beat()
+	check(rec.calls.has("resume") and rec.running, "and resumes it after the answer")
+	fight.queue_free()
+	await _frames(2)
+
+	# A whole fight, all right: revenge.
+	gs.new_game()
+	gs.damage(4)
+	gs.begin_fight("eunju")
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(_n): return true)
+	check(fight.state == fight.State.RESULT and fight.card_kind == "revenge", "all right: the revenge card")
+	check(fight._card_score.text == "점수: 100점", "the score reads 점수: 100점")
+	check(gs.hearts_halves == 10 and gs.outcomes["eunju"] == "revenge" and gs.scores["eunju"] == 100, "revenge: hearts to 5, outcome and score saved")
+	check(fight._card_splats.visible and fight.bursts >= 2 and fight._card_layer.visible, "the carnage card shows with a blood burst")
+	_press_confirm(fight)
+	check(fight.state == fight.State.END and fight._card_title.text == "END OF BUILD 4a", "after the score screen: the END OF BUILD 4a card")
+	fight.queue_free()
+	await _frames(2)
+
+	# Survival.
+	gs.new_game()
+	gs.begin_fight("eunju")
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(n): return n != 2 and n != 9)
+	check(fight.card_kind == "survival" and fight._card_score.text == "점수: 80점", "two wrong: the survival card, 점수: 80점")
+	check(gs.hearts_halves == 6 and gs.outcomes["eunju"] == "survival" and not fight._card_splats.visible, "survival: no restore, no carnage")
+	fight.queue_free()
+	await _frames(2)
+
+	# Game over, then retry.
+	gs.new_game()
+	gs.add_nunchi(2)
+	gs.set_progress("sat_roam")
+	gs.begin_fight("eunju")
+	fight = _make_fight()
+	await _frames(1)
+	var counts := watch(gs, ["player_died", "state_reset"])
+	fight.run_scripted(func(_n): return false)
+	check(fight.state == fight.State.GAME_OVER and fight.card_kind == "gameover" and gs.hearts_halves == 0, "5 wrong answers: game over at 0 hearts")
+	check(fight.logic.index == 5 and fight.lost_signals == 1, "the fight stops at the fifth wrong answer")
+	check(counts["player_died"] == 0 and counts["state_reset"] == 0 and gs.progress == "sat_roam" and gs.in_fight, "no outside-fight death reset")
+	var song: Dictionary = SongData.load_file(SONG_PATH)
+	check(fight._card_title.text == "문태식" and fight._card_body.text == song["game_over"]["line"], "the anchor card carries the sheet's line verbatim")
+	check(fight._retry_button.visible and fight._retry_button.text == "다시 부른다", "a 다시 부른다 button")
+	fight.retry()
+	check(fight.state == fight.State.PLAYING and fight.retries == 1, "retry plays again")
+	check(gs.hearts_halves == 10 and gs.nunchi == 2, "retry restored the fight-start hearts and 눈치")
+	check(fight.logic.index == 0 and is_equal_approx(fight.clock.get_position(), 0.0) and not fight._retry_button.visible, "...from phase 1, the card gone")
+	for round_no in 3:
+		fight.run_scripted(func(_n): return false)
+		fight.retry()
+	check(fight.retries == 4 and fight.state == fight.State.PLAYING, "retries are unlimited")
+	fight.queue_free()
+	await _frames(2)
+
+	# Retry by Enter on the game over card.
+	gs.new_game()
+	gs.begin_fight("eunju")
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(_n): return false)
+	_press_confirm(fight)
+	check(fight.state == fight.State.PLAYING and fight.retries == 1, "Enter on the game over card retries too")
+	fight.queue_free()
+	await _frames(2)
+
+	# Auto modes (stepped in real-time slices).
+	for mode in [["right", "revenge", 100], ["mixed", "survival", 70]]:
+		gs.new_game()
+		gs.begin_fight("eunju")
+		fight = _make_fight(3, mode[0])
+		await _frames(1)
+		var guard := 0
+		while fight.state != fight.State.END and guard < 4000:
+			fight.step(0.1)
+			guard += 1
+		check(fight.state == fight.State.END and fight.last_result["outcome"] == mode[1] and fight.last_result["score"] == mode[2], "--fight-auto %s plays through to the end card (%s, %d)" % [mode[0], mode[1], mode[2]])
+		fight.queue_free()
+		await _frames(2)
+	gs.new_game()
+	gs.begin_fight("eunju")
+	fight = _make_fight(3, "wrong")
+	await _frames(1)
+	var g2 := 0
+	while fight.state != fight.State.GAME_OVER and g2 < 4000:
+		fight.step(0.1)
+		g2 += 1
+	check(fight.state == fight.State.GAME_OVER and fight.logic.wrong == 5, "--fight-auto wrong runs into the game over")
+	fight.queue_free()
+	await _frames(2)
+	gs.new_game()
+
+
+func _test_fight_world() -> void:
+	print("Fight in the world: args, autosave, resume")
+	var WorldScript = load("res://scripts/world.gd")
+	var a: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--fight", "eunju", "--fight-auto", "mixed", "--hearts", "3", "--seed", "4"]))
+	check(a["fight"] == "eunju" and a["fight_auto"] == "mixed" and a["hearts_halves"] == 6 and a["seed"] == 4, "--fight eunju --fight-auto mixed combine with --hearts and --seed")
+	var none: Dictionary = WorldScript.parse_launch_args(PackedStringArray([]))
+	check(none["fight"] == "" and none["fight_auto"] == "" and not none["capture_fight"], "no fight args by default")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--fight-auto", "sideways"]))["fight_auto"] == "", "a bad --fight-auto is ignored")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--fight"]))["fight"] == "", "--fight with no id is ignored")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--fight", "--new-game"]))["fight"] == "", "--fight does not eat the next flag")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--capture-fight"]))["capture_fight"], "--capture-fight recognised")
+	check(SongData.find_for_boss("eunju") == SONG_PATH and SongData.find_for_boss("nobody") == "", "songs are found by their boss field")
+
+	var gs := _gs()
+	var world: Node = await _start_world()
+	gs.set_progress("sat_roam")
+	gs.damage(3)
+	gs.add_nunchi(2)
+	var fight: Node3D = world.start_fight("eunju", "", false, true)
+	await _frames(2)
+	check(fight != null and world.fight == fight and gs.in_fight and gs.current_boss == "eunju", "start_fight begins the fight")
+	check(gs.fight_snapshot == {"hearts_halves": 7, "nunchi": 2}, "the snapshot is hearts and 눈치 at the start")
+	check(fight.is_inside_tree() and fight.get_parent() == world, "the fight is a child of the world")
+	var saved = JSON.parse_string(FileAccess.get_file_as_string(gs.save_path))
+	check(saved["state"]["in_fight"] == true and saved["state"]["fight_snapshot"]["hearts_halves"] == 7 and saved["state"]["hearts_halves"] == 7, "autosaved at the fight start")
+	# Trouble mid-fight is not saved.
+	fight.play_to_freeze()
+	fight.pick_wrong()
+	check(gs.hearts_halves == 5, "a wrong answer in the world's fight costs a heart")
+	var again = JSON.parse_string(FileAccess.get_file_as_string(gs.save_path))
+	check(again["state"]["hearts_halves"] == 7, "nothing is saved mid-fight: the save still holds the fight start")
+	await _stop_world(world)
+
+	# Relaunch: the save is loaded, the fight resumes at its start with the snapshot.
+	gs.new_game()
+	gs.damage(8)
+	world = await _start_world(true)
+	await _frames(2)
+	check(world.fight != null and gs.in_fight and gs.current_boss == "eunju", "relaunching mid-fight resumes the fight")
+	check(gs.hearts_halves == 7 and gs.nunchi == 2 and gs.progress == "sat_roam", "...with the saved hearts and 눈치 and progress")
+	check(world.fight.state == world.fight.State.PLAYING and world.fight.clock.get_position() < 0.5 and world.fight.logic.index == 0, "...at the start of the song")
+	check(world.player == null and world.room == null, "a resumed fight replaces the map: no player, no room")
+	check(world.hud != null and world.hud.get_parent() == world, "the HUD stays up during the fight")
+	# Finish it (revenge); the result is saved and a relaunch no longer enters the fight.
+	world.fight.manual = true
+	world.fight.run_scripted(func(_n): return true)
+	check(gs.hearts_halves == 10 and gs.outcomes.get("eunju") == "revenge", "a revenge win in the world restores the hearts")
+	var done = JSON.parse_string(FileAccess.get_file_as_string(gs.save_path))
+	check(done["state"]["in_fight"] == false and done["state"]["outcomes"]["eunju"] == "revenge" and done["state"]["scores"]["eunju"] == 100, "the result is autosaved")
+	await _stop_world(world)
+	world = await _start_world(true)
+	check(world.fight == null and world.room_id != "", "after the fight a relaunch loads the map again")
+	await _stop_world(world)
+
+	# --fight on a fresh game, with the fight-auto mode passed through.
+	world = await _start_world()
+	var f2: Node3D = world.start_fight("eunju", "right")
+	check(f2.auto_mode == "right" and f2.manual == false, "start_fight passes the auto mode")
+	await _stop_world(world)
+	gs.new_game()
+	_clean_world_saves()

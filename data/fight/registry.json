@@ -1,0 +1,31 @@
+{
+	"note": "Placeholder look for each attack and counter id used in a song file. Ids missing here fall back to 'fallback' (grey box, label shows the id). Counter tone is slapstick or gory.",
+	"attacks": {
+		"booger_flick":            {"color": "#9acd32", "size": [0.35, 0.35, 0.35]},
+		"soda_bottle_rocket":      {"color": "#e0e0e0", "size": [0.3, 0.8, 0.3]},
+		"candle_hairspray_flame":  {"color": "#ff8c1a", "size": [0.9, 0.5, 0.4]},
+		"thumbtack_party_popper":  {"color": "#d9a0ff", "size": [0.6, 0.6, 0.6]},
+		"cake_knife_throw":        {"color": "#c0c0c8", "size": [0.9, 0.2, 0.2]},
+		"party_hat_cone_stab":     {"color": "#ffd24d", "size": [0.4, 0.7, 0.4]},
+		"paper_doll_blade_storm":  {"color": "#f2f2e6", "size": [0.9, 0.9, 0.2]},
+		"mic_cord_electrocution":  {"color": "#3a6bff", "size": [1.1, 0.25, 0.25]},
+		"booger_sniper":           {"color": "#6b8e23", "size": [0.5, 0.2, 0.2]},
+		"color_tv_drop":           {"color": "#555a66", "size": [1.0, 0.8, 0.8]}
+	},
+	"counters": {
+		"booger_flick_slapstick":            {"tone": "slapstick"},
+		"soda_bottle_rocket_slapstick":      {"tone": "slapstick"},
+		"candle_hairspray_flame_slapstick":  {"tone": "slapstick"},
+		"thumbtack_party_popper_slapstick":  {"tone": "slapstick"},
+		"cake_knife_throw_slapstick":        {"tone": "slapstick"},
+		"party_hat_cone_stab_slapstick":     {"tone": "slapstick"},
+		"paper_doll_blade_storm_gory":       {"tone": "gory"},
+		"mic_cord_electrocution_gory":       {"tone": "gory"},
+		"booger_sniper_gory":                {"tone": "gory"},
+		"color_tv_drop_gory":                {"tone": "gory"}
+	},
+	"fallback": {
+		"attack": {"color": "#8a8a8a", "size": [0.5, 0.5, 0.5]},
+		"counter": {"tone": "slapstick"}
+	}
+}

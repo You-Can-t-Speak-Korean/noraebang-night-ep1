@@ -11,6 +11,11 @@
 #   Launch options: --new-game ignores any save; --seed N forces the spot layout.
 #   Capture the 골목길 with 현정, the TV and the news line:
 #     godot --path . -- --capture-alley
+#   Capture the fight (blank freeze, right, wrong, revenge, survival, game over):
+#     godot --path . -- --capture-fight
+#   Fights: --fight eunju starts that boss's fight (saves at its start; relaunching
+#   mid-fight resumes there; --new-game ignores the save); --fight-auto
+#   right|wrong|mixed answers by itself.
 #   Dev only: --hearts N sets the hearts after launch (0.5-5, half steps);
 #   --skip-to scene_01|sat_roam|scene_02|mon_walk|mon_roam (mon = scene_02) jumps to
 #   that progress step; --no-labels starts with the name labels off (F9 toggles).
@@ -28,9 +33,12 @@ const DialogueBoxScene := preload("res://scenes/ui/dialogue_box.tscn")
 const DirectorScript := preload("res://scripts/scene_director.gd")
 const SpawnDealerScript := preload("res://scripts/spawn_dealer.gd")
 const KeyPromptScript := preload("res://scripts/key_prompt.gd")
+const FightScene := preload("res://scenes/fight.tscn")
 const SKIP_TARGETS: Array[String] = ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon"]
 const MONDAY_CARD := "1979년 10월 29일 월요일"
 const SATURDAY_CARD := "1979년 11월 3일 토요일"
+const FIGHT_AUTO_MODES: Array[String] = ["right", "wrong", "mixed"]
+const CAPTURE_FIGHT_BOSS := "eunju"
 const END_CARD := "[placeholder] END OF BUILD 3b"
 const MONDAY_STEPS: Array[String] = ["scene_02", "mon_walk", "mon_roam"]
 const HOME_LINE := "(아직 집에 갈 수 없다.) [placeholder: home]"
@@ -79,6 +87,8 @@ var home_exit: Dictionary = {}
 ## F9 / --no-labels: the door, prop and actor name labels (dev aids).
 var labels_visible := true
 var end_card_shown := false
+## The running fight (Build 4a), or null. A fight replaces the map: no player, no room.
+var fight: Node3D = null
 ## How many times the trap flash has fired (the flash itself is a placeholder).
 var flashes := 0
 
@@ -112,7 +122,7 @@ func _ready() -> void:
 	spawn_config = SpawnDealerScript.load_config()
 	var args := parse_launch_args(OS.get_cmdline_user_args())
 	_forced_seed = args["seed"]
-	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"]
+	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"] or args["capture_fight"]
 	labels_visible = not args["no_labels"]
 	capture_mode = capturing
 	if capturing:
@@ -124,6 +134,13 @@ func _ready() -> void:
 		set_hearts_dev(args["hearts_halves"])
 	hud = HudScene.instantiate()
 	add_child(hud)
+	if args["capture_fight"]:
+		_run_capture_fight()
+		return
+	if args["fight"] != "" or GameState.in_fight:
+		# --fight <boss> starts it; a saved fight (relaunch mid-fight) resumes at its start.
+		start_fight(args["fight"] if args["fight"] != "" else GameState.current_boss, args["fight_auto"], args["fight"] == "")
+		return
 	dialogue_box = DialogueBoxScene.instantiate()
 	add_child(dialogue_box)
 	dialogue_box.opened.connect(update_lock)
@@ -157,11 +174,13 @@ func _ready() -> void:
 
 ## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool,
 ## "capture_dialogue": bool, "capture_alley": bool, "capture_rooms": bool, "no_labels": bool,
+## "capture_fight": bool, "fight": String boss id ("" = none), "fight_auto": "" | "right" | "wrong" | "mixed",
 ## "hearts_halves": int (-1 = none), "skip_to": String ("" = none)}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
 			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args, "capture_rooms": "--capture-rooms" in args,
+			"capture_fight": "--capture-fight" in args, "fight": "", "fight_auto": "",
 			"no_labels": "--no-labels" in args, "hearts_halves": -1, "skip_to": ""}
 	var at := args.find("--seed")
 	if at != -1:
@@ -174,6 +193,18 @@ static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 		parsed["hearts_halves"] = hearts_arg_to_halves(args[at + 1]) if at + 1 < args.size() else -1
 		if parsed["hearts_halves"] == -1:
 			push_warning("World: --hearts needs a number of hearts (e.g. 2.5); ignoring it")
+	at = args.find("--fight")
+	if at != -1:
+		if at + 1 < args.size() and not args[at + 1].begins_with("--"):
+			parsed["fight"] = args[at + 1]
+		else:
+			push_warning("World: --fight needs a boss id (e.g. eunju); ignoring it")
+	at = args.find("--fight-auto")
+	if at != -1:
+		if at + 1 < args.size() and FIGHT_AUTO_MODES.has(args[at + 1]):
+			parsed["fight_auto"] = args[at + 1]
+		else:
+			push_warning("World: --fight-auto needs one of %s; ignoring it" % str(FIGHT_AUTO_MODES))
 	at = args.find("--skip-to")
 	if at != -1:
 		if at + 1 < args.size() and SKIP_TARGETS.has(args[at + 1]):
@@ -255,6 +286,33 @@ func begin() -> void:
 			_show_end_card()
 		_:
 			director.start_scene()
+
+
+## Starts `boss_id`'s fight (its song file is found by the "boss" field) and saves at its
+## start. `resume`: continue a saved fight from its start-of-fight snapshot instead of
+## taking a new one. `manual`: the caller steps the fight (captures). Null if no song.
+func start_fight(boss_id: String, auto := "", resume := false, manual := false) -> Node3D:
+	var path := SongData.find_for_boss(boss_id)
+	var song := SongData.load_file(path) if path != "" else {}
+	if song.is_empty():
+		push_error("World: no song for boss '%s'" % boss_id)
+		return null
+	if fight != null:
+		remove_child(fight)
+		fight.queue_free()
+		fight = null
+	if resume and GameState.in_fight and not GameState.fight_snapshot.is_empty():
+		GameState.current_boss = boss_id
+		GameState.retry_fight()
+	else:
+		GameState.begin_fight(boss_id)
+	autosave()
+	fight = FightScene.instantiate()
+	fight.setup(song, GameState.spawn_seed, auto, manual)
+	fight.result_ready.connect(func(_result): autosave())
+	add_child(fight)
+	apply_labels()
+	return fight
 
 
 func _process(_delta: float) -> void:
@@ -776,6 +834,68 @@ func _run_capture_rooms() -> void:
 			ok = false
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if ok else 1)
+
+
+## One PNG per fight moment: a blank mid-freeze, a right answer, a wrong answer, the
+## revenge card, the survival card, the game over. Each scenario is a fresh fight.
+func _run_capture_fight() -> void:
+	var ok := true
+	var shot := func(shot_name: String, min_luminance := 0.01) -> bool:
+		for i in 6:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var path := "%s/%s.png" % [Shots.dir(), shot_name]
+		img.save_png(path)
+		img.convert(Image.FORMAT_RGB8)
+		img.resize(480, 270)
+		var lum := _mean_luminance(img)
+		print("%s  %s  luminance %.4f" % [shot_name, path, lum])
+		if lum < min_luminance:
+			print("FAIL: %s is (nearly) black" % shot_name)
+			return false
+		return true
+	var advance := func(f: Node3D, seconds: float) -> void:
+		for i in int(seconds / 0.05):
+			f.step(0.05)
+
+	var f := _capture_fight()
+	f.play_to_freeze()
+	advance.call(f, 2.0)
+	ok = await shot.call("fight_freeze") and ok
+	f.pick_right()
+	advance.call(f, 0.7)
+	ok = await shot.call("fight_right") and ok
+	f.finish_beat()
+	f.play_to_freeze()
+	advance.call(f, 1.0)
+	f.pick_wrong()
+	advance.call(f, 0.3)
+	ok = await shot.call("fight_wrong") and ok
+
+	f = _capture_fight()
+	f.run_scripted(func(_n): return true)
+	advance.call(f, 0.3)
+	ok = await shot.call("fight_revenge") and ok
+
+	f = _capture_fight()
+	f.run_scripted(func(n): return n != 3 and n != 7)
+	advance.call(f, 0.3)
+	ok = await shot.call("fight_survival") and ok
+
+	f = _capture_fight()
+	f.run_scripted(func(_n): return false)
+	advance.call(f, 0.3)
+	ok = await shot.call("fight_gameover", 0.004) and ok
+	print("adapter: ", RenderingServer.get_video_adapter_name())
+	get_tree().quit(0 if ok else 1)
+
+
+## A fresh fight at full hearts for the capture, stepped by the capture (never saved).
+func _capture_fight() -> Node3D:
+	GameState.new_game()
+	hud.refresh()
+	return start_fight(CAPTURE_FIGHT_BOSS, "", false, true)
 
 
 func _run_capture_hud() -> void:
