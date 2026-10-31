@@ -15,7 +15,11 @@
 #     godot --path . -- --capture-fight
 #   Fights: --fight eunju starts that boss's fight (saves at its start; relaunching
 #   mid-fight resumes there; --new-game ignores the save); --fight-auto
-#   right|wrong|mixed answers by itself.
+#   right|wrong|mixed|cross answers by itself (cross: a cross-out on every blank, then right).
+#   --fight-auto, every --capture-* mode and --sandbox use a throwaway save under
+#   user://sandbox/ and never touch the real one.
+#   Dev only: --nunchi N sets the 눈치 (0-cap); --known a,b makes the fight's boss know those
+#   card ids (loaded blanks and taunts).
 #   Dev only: --hearts N sets the hearts after launch (0.5-5, half steps);
 #   --skip-to scene_01|sat_roam|scene_02|mon_walk|mon_roam (mon = scene_02) jumps to
 #   that progress step; --no-labels starts with the name labels off (F9 toggles).
@@ -37,7 +41,7 @@ const FightScene := preload("res://scenes/fight.tscn")
 const SKIP_TARGETS: Array[String] = ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon"]
 const MONDAY_CARD := "1979년 10월 29일 월요일"
 const SATURDAY_CARD := "1979년 11월 3일 토요일"
-const FIGHT_AUTO_MODES: Array[String] = ["right", "wrong", "mixed"]
+const FIGHT_AUTO_MODES: Array[String] = ["right", "wrong", "mixed", "cross"]
 const CAPTURE_FIGHT_BOSS := "eunju"
 const END_CARD := "[placeholder] END OF BUILD 3b"
 const MONDAY_STEPS: Array[String] = ["scene_02", "mon_walk", "mon_roam"]
@@ -127,11 +131,15 @@ func _ready() -> void:
 	capture_mode = capturing
 	if capturing:
 		begin_progress = false
-	_start_game(args["new_game"] or capturing)
+	_start_game(args["new_game"] or capturing or args["fight_auto"] != "")
 	if args["skip_to"] != "":
 		_apply_skip_to(args["skip_to"])
 	if args["hearts_halves"] != -1:
 		set_hearts_dev(args["hearts_halves"])
+	if args["nunchi"] != -1:
+		set_nunchi_dev(args["nunchi"])
+	if not args["known"].is_empty():
+		set_known_dev(args["known"], args["fight"] if args["fight"] != "" else GameState.current_boss)
 	hud = HudScene.instantiate()
 	add_child(hud)
 	if args["capture_fight"]:
@@ -175,13 +183,14 @@ func _ready() -> void:
 ## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool,
 ## "capture_dialogue": bool, "capture_alley": bool, "capture_rooms": bool, "no_labels": bool,
 ## "capture_fight": bool, "fight": String boss id ("" = none), "fight_auto": "" | "right" | "wrong" | "mixed",
-## "hearts_halves": int (-1 = none), "skip_to": String ("" = none)}
+## "hearts_halves": int (-1 = none), "skip_to": String ("" = none),
+## "nunchi": int (-1 = none), "known": Array[String] card ids}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
 			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args, "capture_rooms": "--capture-rooms" in args,
 			"capture_fight": "--capture-fight" in args, "fight": "", "fight_auto": "",
-			"no_labels": "--no-labels" in args, "hearts_halves": -1, "skip_to": ""}
+			"no_labels": "--no-labels" in args, "hearts_halves": -1, "skip_to": "", "nunchi": -1, "known": []}
 	var at := args.find("--seed")
 	if at != -1:
 		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
@@ -205,6 +214,20 @@ static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 			parsed["fight_auto"] = args[at + 1]
 		else:
 			push_warning("World: --fight-auto needs one of %s; ignoring it" % str(FIGHT_AUTO_MODES))
+	at = args.find("--nunchi")
+	if at != -1:
+		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
+			parsed["nunchi"] = int(args[at + 1])
+		else:
+			push_warning("World: --nunchi needs a whole number >= 0; ignoring it")
+	at = args.find("--known")
+	if at != -1:
+		if at + 1 < args.size() and not args[at + 1].begins_with("--"):
+			for card in args[at + 1].split(","):
+				if card.strip_edges() != "":
+					parsed["known"].append(card.strip_edges())
+		else:
+			push_warning("World: --known needs card ids like dad_country,mom_salary; ignoring it")
 	at = args.find("--skip-to")
 	if at != -1:
 		if at + 1 < args.size() and SKIP_TARGETS.has(args[at + 1]):
@@ -248,6 +271,24 @@ func _start_game(ignore_save: bool) -> void:
 func set_hearts_dev(halves: int) -> void:
 	GameState.hearts_halves = clampi(halves, 0, GameState.hearts_max_halves)
 	GameState.hearts_changed.emit(GameState.hearts_halves)
+
+
+## Dev only (--nunchi): sets the 눈치 directly, clamped to 0..cap.
+func set_nunchi_dev(n: int) -> void:
+	GameState.nunchi = clampi(n, 0, GameState.nunchi_cap)
+	GameState.nunchi_changed.emit(GameState.nunchi)
+
+
+## Dev only (--known): `boss` knows these cards (they leave the hand, as when lost to her).
+func set_known_dev(cards: Array, boss: String) -> void:
+	if boss == "":
+		push_warning("World: --known needs a fight (--fight <boss>); ignoring it")
+		return
+	for card in cards:
+		if GameState.hand.has(card):
+			GameState.lose_secret(card, boss)
+		else:
+			push_warning("World: --known: '%s' is not a card id; ignoring it" % card)
 
 
 ## Dev only (--skip-to): sets the progress step (and the day and its deal).
@@ -837,7 +878,8 @@ func _run_capture_rooms() -> void:
 
 
 ## One PNG per fight moment: a blank mid-freeze, a right answer, a wrong answer, the
-## revenge card, the survival card, the game over. Each scenario is a fresh fight.
+## revenge card, the survival card, the game over, then (4b) a cross-out, a loaded blank, the
+## bridge, the blackout, the final chorus and a survival taunt. Each scenario is a fresh fight.
 func _run_capture_fight() -> void:
 	var ok := true
 	var shot := func(shot_name: String, min_luminance := 0.01) -> bool:
@@ -887,13 +929,54 @@ func _run_capture_fight() -> void:
 	f.run_scripted(func(_n): return false)
 	advance.call(f, 0.3)
 	ok = await shot.call("fight_gameover", 0.004) and ok
+
+	# Build 4b: a cross-out, a loaded blank, the bridge, the blackout, the final chorus, the taunts.
+	var all_cards := ["dad_country", "mom_salary", "dad_drinking"]
+	var answer_to := func(fx: Node3D, blank_n: int) -> void:
+		while int(fx.logic.current()["n"]) < blank_n:
+			fx.play_to_freeze()
+			fx.pick_right()
+			fx.finish_beat()
+		fx.play_to_freeze()
+		advance.call(fx, 1.0)
+	f = _capture_fight(3)
+	f.play_to_freeze()
+	advance.call(f, 1.0)
+	f.cross_out()
+	advance.call(f, 0.2)
+	ok = await shot.call("fight_crossout") and ok
+	f = _capture_fight(0, ["dad_country"])
+	answer_to.call(f, 4)
+	ok = await shot.call("fight_loaded") and ok
+	f = _capture_fight()
+	answer_to.call(f, 7)
+	ok = await shot.call("fight_bridge", 0.004) and ok
+	f = _capture_fight()
+	answer_to.call(f, 8)
+	ok = await shot.call("fight_blackout", 0.004) and ok
+	f = _capture_fight(0, all_cards)
+	answer_to.call(f, 9)
+	ok = await shot.call("fight_final", 0.004) and ok
+	f = _capture_fight(0, all_cards)
+	f.run_scripted(func(n): return n != 3 and n != 7)
+	var enter := InputEventAction.new()
+	enter.action = "confirm"
+	enter.pressed = true
+	f._unhandled_input(enter)
+	f._unhandled_input(enter)
+	advance.call(f, 0.3)
+	ok = await shot.call("fight_taunts") and ok
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if ok else 1)
 
 
 ## A fresh fight at full hearts for the capture, stepped by the capture (never saved).
-func _capture_fight() -> Node3D:
+func _capture_fight(nunchi := 0, known: Array = []) -> Node3D:
 	GameState.new_game()
+	for card in known:
+		GameState.lose_secret(card, CAPTURE_FIGHT_BOSS)
+	if nunchi > 0:
+		GameState.add_nunchi(nunchi)
 	hud.refresh()
 	return start_fight(CAPTURE_FIGHT_BOSS, "", false, true)
 

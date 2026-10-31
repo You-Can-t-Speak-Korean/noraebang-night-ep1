@@ -2,7 +2,11 @@
 # each blank, the result cards and the game over. It runs a song file through a
 # SongClock (never audio directly) and FightLogic (the rules); nothing here is
 # specific to one boss. Attack and counter ids resolve through FightRegistry.
-#   Controls at a blank: W/S (or the arrows) and Enter, or a click.
+#   Controls at a blank: W/S (or the arrows) and Enter, or a click. X, or a click on
+#   the 눈치 eyes in the HUD, crosses out one wrong option for 1 눈치 (once per blank).
+#   A known loaded card adds a 4th option; the song's lighting modes (normal, flicker,
+#   frantic, and a blank's blackout) come from the song file.
+#   After a survival win the boss's line and her taunts play, then the end card.
 #   World starts it (--fight <boss>, or resuming a saved fight); the tests and the
 #   capture mode drive it with step() and pick_*().
 #
@@ -12,11 +16,11 @@ extends Node3D
 signal result_ready(result: Dictionary)
 signal ended
 
-enum State { PLAYING, FREEZE, BEAT, RESULT, END, GAME_OVER }
+enum State { PLAYING, FREEZE, BEAT, RESULT, END, GAME_OVER, AFTERMATH }
 
 const TuningScript := preload("res://scripts/tuning.gd")
 const FONT := preload("res://art/fonts/NotoSansKR/NotoSansKR-VF.ttf")
-const END_TEXT := "END OF BUILD 4a"
+const END_TEXT := "END OF BUILD 4b"
 const SCORE_FORMAT := "점수: %d점"
 const RETRY_TEXT := "다시 부른다"
 const BEAT_TIME := 1.6
@@ -29,8 +33,19 @@ const LINE_H := 66.0
 const CLIP_SIZE := Vector2(1440, 200)
 const FLASH_ALPHA := 0.55
 const FLASH_TIME := 0.4
+const SHAKE_TIME := 0.45
+const CAMERA_BASE := Vector3(0, 2.2, 10.5)
+const SUN_ENERGY := 0.9
+const AMBIENT_ENERGY := 0.6
+const AMBIENT_COLOR := Color(0.75, 0.72, 0.7)
+const FRANTIC_COLOR := Color(1.0, 0.2, 0.15)
+const CROSS_KEY := KEY_X
+const HINT_CROSS := "X or click the eyes: cross out a wrong option, costs 1 nunchi [placeholder]"
+const HINT_NO_NUNCHI := "No nunchi left to cross out [placeholder]"
+const HINT_USED := "Already crossed out on this blank [placeholder]"
 
-## "", "right", "wrong" or "mixed" (wrong on every third blank): answers by itself.
+## "", "right", "wrong", "mixed" (wrong on every third blank) or "cross" (a cross-out on
+## every blank, then right): answers by itself.
 var auto_mode := ""
 ## True: the owner calls step(); false: _process does.
 var manual := false
@@ -48,8 +63,16 @@ var card_kind := ""
 var retries := 0
 var bursts := 0
 var flashes := 0
+var shakes := 0
+## How many loaded blanks' attacks have landed with the nastier flourish.
+var loaded_flourishes := 0
 var lost_signals := 0
 var freeze_left := 0.0
+## What the lights are doing now: "normal", "flicker", "frantic" or "blackout".
+var lighting := "normal"
+## After a survival win: the lines to play, [{"speaker", "text", "card"}], and the one showing.
+var aftermath: Array[Dictionary] = []
+var aftermath_index := -1
 
 var _seed := 0
 var _freeze_time := 0.0
@@ -77,6 +100,19 @@ var _card_score: Label
 var _card_hint: Label
 var _retry_button: Button
 var _set: Node3D
+var _sun: DirectionalLight3D
+var _env: Environment
+var _camera: Camera3D
+var _light_overlay: ColorRect
+var _light_override := ""
+var _light_time := 0.0
+var _shake_left := 0.0
+var _shake_strength := 0.0
+var _loaded_label: Label
+var _cross_hint: Label
+var _after_panel: Panel
+var _after_speaker: Label
+var _after_text: Label
 var _eunju_pos := Vector3(ATTACKER_X, 0.0, -1.0)
 var _boram_pos := Vector3(TARGET_X, 0.0, -1.0)
 
@@ -118,7 +154,16 @@ func start_song() -> void:
 	_option_box.visible = false
 	_hide_timer()
 	_banner.text = ""
+	_loaded_label.visible = false
+	_cross_hint.visible = false
+	_after_panel.visible = false
+	aftermath = []
+	aftermath_index = -1
+	_light_override = ""
+	_shake_left = 0.0
+	_camera.position = CAMERA_BASE
 	_clear_attack()
+	_update_lighting(0.0)
 	for i in song["lines"].size():
 		_line_texts[i] = _display_text(i)
 	_update_scroll()
@@ -151,7 +196,13 @@ func step(delta: float) -> void:
 		State.RESULT:
 			_result_time += delta
 			if auto_mode != "" and _result_time >= AUTO_RESULT_DELAY:
-				_show_end()
+				_advance_result()
+		State.AFTERMATH:
+			_result_time += delta
+			if auto_mode != "" and _result_time >= AUTO_RESULT_DELAY:
+				_next_aftermath()
+	_update_shake(delta)
+	_update_lighting(delta)
 
 
 # ── Input ──────────────────────────────────────────────────────────────
@@ -168,25 +219,77 @@ func _unhandled_input(event: InputEvent) -> void:
 				_select(selected + 1)
 			elif event.is_action_pressed("confirm"):
 				pick(selected)
+			elif event is InputEventKey and event.pressed and event.keycode == CROSS_KEY:
+				cross_out()
+			elif clicked and _on_nunchi_eyes(event.position):
+				cross_out()
 		State.RESULT:
 			if event.is_action_pressed("confirm") or clicked:
-				_show_end()
+				_advance_result()
+		State.AFTERMATH:
+			if event.is_action_pressed("confirm") or clicked:
+				_next_aftermath()
 		State.GAME_OVER:
 			if event.is_action_pressed("confirm"):
 				retry()
 
 
+## Moves the highlight to option `i` (wrapping), skipping the crossed-out one in the
+## direction of travel.
 func _select(i: int) -> void:
 	if options.is_empty():
 		return
-	selected = posmod(i, options.size())
+	var dir := 1 if i >= selected else -1
+	var target := posmod(i, options.size())
+	for tries in options.size():
+		if logic.crossed == "" or options[target] != logic.crossed:
+			break
+		target = posmod(target + dir, options.size())
+	selected = target
 	_paint_options()
 
 
 ## Chooses option `i` of the shuffled list (what Enter and a click call).
 func pick(i: int) -> void:
-	if state == State.FREEZE and i >= 0 and i < options.size():
+	if state == State.FREEZE and i >= 0 and i < options.size() and options[i] != logic.crossed:
 		_resolve(options[i])
+
+
+## Crosses out one wrong option for 1 눈치 (once per blank). False when it isn't allowed.
+func cross_out() -> bool:
+	if state != State.FREEZE:
+		return false
+	var removed := logic.cross_out()
+	if removed == "":
+		_update_cross_hint()
+		return false
+	var at := options.find(removed)
+	var b := _option_buttons[at]
+	b.disabled = true
+	var strike: ColorRect = b.get_node("Strike")
+	var width := b.get_theme_font("font").get_string_size(removed, HORIZONTAL_ALIGNMENT_LEFT, -1, 40).x
+	strike.size = Vector2(width + 24.0, 5.0)
+	strike.position = Vector2((b.custom_minimum_size.x - strike.size.x) / 2.0, b.custom_minimum_size.y / 2.0)
+	strike.visible = true
+	if selected == at:
+		_select(selected + 1)
+	_paint_options()
+	_update_cross_hint()
+	return true
+
+
+func _on_nunchi_eyes(at: Vector2) -> bool:
+	var eyes := get_tree().get_first_node_in_group("nunchi_display") as Control
+	return eyes != null and eyes.is_visible_in_tree() and eyes.get_global_rect().has_point(at)
+
+
+func _update_cross_hint() -> void:
+	if logic.crossed != "":
+		_cross_hint.text = HINT_USED
+	elif GameState.nunchi < 1:
+		_cross_hint.text = HINT_NO_NUNCHI
+	else:
+		_cross_hint.text = HINT_CROSS
 
 
 ## Scripted helpers for the tests, the auto modes and the captures.
@@ -198,12 +301,14 @@ func pick_right() -> void:
 func pick_wrong() -> void:
 	if state == State.FREEZE:
 		for o in options:
-			if o != logic.current()["answer"]:
+			if o != logic.current()["answer"] and o != logic.crossed:
 				_resolve(o)
 				return
 
 
 func _auto_pick() -> void:
+	if auto_mode == "cross" and cross_out():
+		return
 	var wrong_now: bool = auto_mode == "wrong" or (auto_mode == "mixed" and int(logic.current()["n"]) % 3 == 0)
 	if wrong_now:
 		pick_wrong()
@@ -246,6 +351,11 @@ func _enter_freeze() -> void:
 	_timer_bar.visible = true
 	_timer_label.visible = true
 	_banner.text = ""
+	_loaded_label.visible = false
+	_light_override = str(blank.get("light", ""))
+	_update_lighting(0.0)
+	_update_cross_hint()
+	_cross_hint.visible = true
 	_spawn_attack(registry.attack(str(blank["attack"])))
 	_update_attack(0.0)
 	_update_timer()
@@ -254,6 +364,8 @@ func _enter_freeze() -> void:
 func _resolve(picked: String) -> void:
 	var blank := logic.current()
 	var res := logic.answer(picked)
+	if res.is_empty():
+		return
 	last_result = res
 	state = State.BEAT
 	_beat_left = BEAT_TIME
@@ -264,6 +376,7 @@ func _resolve(picked: String) -> void:
 	_apply_line_texts()
 	_paint_options(picked, str(blank["answer"]))
 	_hide_timer()
+	_cross_hint.visible = false
 	if res["right"]:
 		var counter := registry.counter(str(blank["counter"]))
 		_banner.text = "RIGHT   [placeholder] counter: %s (%s)" % [counter["id"], counter["tone"]]
@@ -274,6 +387,8 @@ func _resolve(picked: String) -> void:
 		_banner.modulate = Color(1.0, 0.45, 0.45)
 		_burst(_boram_pos + Vector3(0, 1.1, 0), 80, 1.0)
 		_flash()
+		if res["loaded"]:
+			_loaded_flourish(str(res["card"]))
 	_animate_beat(0.0)
 
 
@@ -285,6 +400,9 @@ func _hearts_cost_text() -> String:
 func _after_beat() -> void:
 	_option_box.visible = false
 	_banner.text = ""
+	_loaded_label.visible = false
+	_light_override = ""
+	_update_lighting(0.0)
 	_clear_attack()
 	if logic.lost():
 		_show_game_over()
@@ -322,13 +440,57 @@ func _finish_song() -> void:
 		_card_bg.color = Color(0.08, 0.1, 0.16, 0.94)
 		_card_title.text = "SURVIVAL WIN"
 		_card_body.text = card_text
+	aftermath = _build_aftermath(card_kind)
+	aftermath_index = -1
 	_card_layer.visible = true
 	result_ready.emit(result)
+
+
+## The boss's spoken line, then one taunt per known loaded card in card-list order.
+## Only a survival win has any: a dead boss doesn't taunt.
+func _build_aftermath(outcome: String) -> Array[Dictionary]:
+	var lines: Array[Dictionary] = []
+	if outcome != "survival":
+		return lines
+	var data: Dictionary = song["outcomes"]["survival"]
+	var speaker := str(data.get("speaker", ""))
+	if str(data.get("line", "")) != "":
+		lines.append({"speaker": speaker, "text": str(data["line"]), "card": ""})
+	for item in logic.known_loaded():
+		if str(item.get("taunt", "")) != "":
+			lines.append({"speaker": speaker, "text": str(item["taunt"]), "card": str(item["card"])})
+	return lines
+
+
+## Enter or a click on the result card: the aftermath if there is one, else the end card.
+func _advance_result() -> void:
+	if aftermath.is_empty():
+		_show_end()
+		return
+	state = State.AFTERMATH
+	_result_time = 0.0
+	_card_splats.visible = false
+	for l in [_card_title, _card_body, _card_score, _card_hint]:
+		l.text = ""
+	_after_panel.visible = true
+	_next_aftermath()
+
+
+func _next_aftermath() -> void:
+	aftermath_index += 1
+	_result_time = 0.0
+	if aftermath_index >= aftermath.size():
+		_show_end()
+		return
+	var line := aftermath[aftermath_index]
+	_after_speaker.text = line["speaker"]
+	_after_text.text = line["text"]
 
 
 func _show_end() -> void:
 	state = State.END
 	card_kind = "end"
+	_after_panel.visible = false
 	_card_splats.visible = false
 	_card_bg.color = Color(0, 0, 0, 1)
 	_card_title.text = END_TEXT
@@ -402,14 +564,15 @@ func _build_set() -> void:
 	e.background_mode = Environment.BG_COLOR
 	e.background_color = Color(0.1, 0.1, 0.13)
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	e.ambient_light_color = Color(0.75, 0.72, 0.7)
-	e.ambient_light_energy = 0.6
+	e.ambient_light_color = AMBIENT_COLOR
+	e.ambient_light_energy = AMBIENT_ENERGY
 	env.environment = e
+	_env = e
 	_set.add_child(env)
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-40, 20, 0)
-	sun.light_energy = 0.9
-	_set.add_child(sun)
+	_sun = DirectionalLight3D.new()
+	_sun.rotation_degrees = Vector3(-40, 20, 0)
+	_sun.light_energy = SUN_ENERGY
+	_set.add_child(_sun)
 	_box("Floor", Vector3(18, 0.2, 8), Color(0.42, 0.36, 0.3), Vector3(0, -0.1, -2))
 	_box("BackWall", Vector3(18, 5, 0.2), Color(0.5, 0.48, 0.45), Vector3(0, 2.5, -5.6))
 	_box("Banjugi", Vector3(2.0, 1.5, 0.8), Color(0.2, 0.22, 0.28), Vector3(0, 0.75, -4.7), "반주기")
@@ -422,7 +585,8 @@ func _build_set() -> void:
 	var cam := Camera3D.new()
 	cam.name = "Camera"
 	cam.fov = 40.0
-	cam.position = Vector3(0, 2.2, 10.5)
+	cam.position = CAMERA_BASE
+	_camera = cam
 	_set.add_child(cam)
 	cam.look_at_from_position(cam.position, Vector3(0, 0.9, 0), Vector3.UP)
 	cam.current = true
@@ -507,6 +671,80 @@ func _burst(at: Vector3, amount: int, size: float) -> void:
 	get_tree().create_timer(2.5).timeout.connect(p.queue_free)
 
 
+## The nastier landing of a loaded blank's attack (all from the registry): extra blood,
+## a screen shake and the LOADED label with the card id.
+func _loaded_flourish(card: String) -> void:
+	var f := registry.loaded_flourish()
+	loaded_flourishes += 1
+	for i in int(f["extra_splats"]):
+		_burst(_boram_pos + Vector3(0.35 * (i + 1), 0.9, 0.2), 110, 1.3)
+	_start_shake(float(f["shake"]))
+	_loaded_label.text = "%s: %s" % [f["label"], card]
+	_loaded_label.visible = true
+
+
+func _start_shake(strength: float) -> void:
+	shakes += 1
+	_shake_strength = strength
+	_shake_left = SHAKE_TIME if strength > 0.0 else 0.0
+
+
+func _update_shake(delta: float) -> void:
+	if _shake_left <= 0.0:
+		return
+	_shake_left = maxf(_shake_left - delta, 0.0)
+	var fade := _shake_left / SHAKE_TIME
+	_camera.position = CAMERA_BASE + Vector3(sin(_light_time * 93.0), cos(_light_time * 71.0), 0.0) * _shake_strength * fade
+
+
+## The lighting mode now: a blank's own (blackout) from its reveal to the end of its
+## counter, else the phase of the line being sung; the cards use normal light.
+func _update_lighting(delta: float) -> void:
+	_light_time += delta
+	if _light_override != "":
+		lighting = _light_override
+	elif state == State.RESULT or state == State.AFTERMATH or state == State.END or state == State.GAME_OVER:
+		lighting = "normal"
+	else:
+		var phase := 1
+		var t := clock.get_position()
+		for l in song["lines"]:
+			if float(l["time"]) <= t:
+				phase = int(l["phase"])
+		lighting = SongData.phase_lighting(song, phase)
+	var sun_energy := SUN_ENERGY
+	var ambient_energy := AMBIENT_ENERGY
+	var color := Color.WHITE
+	var ambient_color := AMBIENT_COLOR
+	var overlay := Color(0, 0, 0, 0)
+	match lighting:
+		"flicker":
+			if not _flicker_on(5.0):
+				sun_energy = 0.12
+				ambient_energy = 0.15
+				overlay = Color(0, 0, 0, 0.4)
+		"frantic":
+			var on := _flicker_on(14.0)
+			color = FRANTIC_COLOR
+			ambient_color = FRANTIC_COLOR
+			sun_energy = 0.45 if on else 0.1
+			ambient_energy = 0.25 if on else 0.05
+			overlay = Color(0.35, 0.0, 0.0, 0.22 if on else 0.45)
+		"blackout":
+			sun_energy = 0.0
+			ambient_energy = 0.0
+			overlay = Color(0, 0, 0, 0.88)
+	_sun.light_energy = sun_energy
+	_sun.light_color = color
+	_env.ambient_light_energy = ambient_energy
+	_env.ambient_light_color = ambient_color
+	_light_overlay.color = overlay
+
+
+func _flicker_on(speed: float) -> bool:
+	return sin(_light_time * speed) * sin(_light_time * speed * 2.3 + 1.0) > -0.35
+
+
 func _flash() -> void:
 	flashes += 1
 	_flash_rect.color.a = FLASH_ALPHA
@@ -525,6 +763,15 @@ func _label(text: String, size: int, align := HORIZONTAL_ALIGNMENT_CENTER) -> La
 
 
 func _build_ui() -> void:
+	# Under the panel and the options, so the lyrics stay readable in the dark.
+	var light_layer := CanvasLayer.new()
+	light_layer.layer = 4
+	add_child(light_layer)
+	_light_overlay = ColorRect.new()
+	_light_overlay.color = Color(0, 0, 0, 0)
+	_light_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_light_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	light_layer.add_child(_light_overlay)
 	var ui := CanvasLayer.new()
 	ui.layer = 5
 	add_child(ui)
@@ -562,10 +809,34 @@ func _build_ui() -> void:
 		b.custom_minimum_size = Vector2(700, 70)
 		b.focus_mode = Control.FOCUS_NONE
 		b.add_theme_font_size_override("font_size", 40)
-		b.mouse_entered.connect(func(): if state == State.FREEZE: _select(i))
+		b.mouse_entered.connect(func(): if state == State.FREEZE and options[i] != logic.crossed: _select(i))
 		b.pressed.connect(func(): pick(i))
 		_option_box.add_child(b)
 		_option_buttons.append(b)
+		var strike := ColorRect.new()
+		strike.name = "Strike"
+		strike.color = Color(1.0, 0.35, 0.3)
+		strike.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		strike.visible = false
+		b.add_child(strike)
+
+	_cross_hint = _label("", 28)
+	_cross_hint.position = Vector2(410, 480)
+	_cross_hint.size = Vector2(1100, 40)
+	_cross_hint.add_theme_color_override("font_color", Color(0.95, 0.9, 0.6))
+	_cross_hint.add_theme_color_override("font_outline_color", Color.BLACK)
+	_cross_hint.add_theme_constant_override("outline_size", 8)
+	_cross_hint.visible = false
+	ui.add_child(_cross_hint)
+
+	_loaded_label = _label("", 56)
+	_loaded_label.position = Vector2(210, 650)
+	_loaded_label.size = Vector2(1500, 70)
+	_loaded_label.add_theme_color_override("font_color", Color(1.0, 0.2, 0.2))
+	_loaded_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_loaded_label.add_theme_constant_override("outline_size", 14)
+	_loaded_label.visible = false
+	ui.add_child(_loaded_label)
 
 	_timer_bar_bg = ColorRect.new()
 	_timer_bar_bg.color = Color(0, 0, 0, 0.6)
@@ -629,6 +900,32 @@ func _build_ui() -> void:
 	_card_hint.position = Vector2(160, 900)
 	_card_hint.size = Vector2(1600, 50)
 	_card_layer.add_child(_card_hint)
+	_after_panel = Panel.new()
+	_after_panel.position = Vector2(210, 700)
+	_after_panel.size = Vector2(1500, 240)
+	var after_style := StyleBoxFlat.new()
+	after_style.bg_color = Color(0.04, 0.04, 0.06, 0.92)
+	after_style.border_color = Color(0.85, 0.8, 0.65)
+	after_style.set_border_width_all(3)
+	after_style.set_corner_radius_all(10)
+	_after_panel.add_theme_stylebox_override("panel", after_style)
+	_after_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_after_panel.visible = false
+	_card_layer.add_child(_after_panel)
+	_after_speaker = _label("", 36, HORIZONTAL_ALIGNMENT_LEFT)
+	_after_speaker.position = Vector2(32, 16)
+	_after_speaker.size = Vector2(1000, 50)
+	_after_speaker.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	_after_panel.add_child(_after_speaker)
+	_after_text = _label("", 44, HORIZONTAL_ALIGNMENT_LEFT)
+	_after_text.position = Vector2(32, 76)
+	_after_text.size = Vector2(1436, 110)
+	_after_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_after_panel.add_child(_after_text)
+	var after_hint := _label("Press Enter", 26, HORIZONTAL_ALIGNMENT_RIGHT)
+	after_hint.position = Vector2(1100, 190)
+	after_hint.size = Vector2(370, 40)
+	_after_panel.add_child(after_hint)
 	_retry_button = Button.new()
 	_retry_button.text = RETRY_TEXT
 	_retry_button.focus_mode = Control.FOCUS_NONE
@@ -710,6 +1007,8 @@ func _update_scroll() -> void:
 func _fill_option_buttons() -> void:
 	for i in _option_buttons.size():
 		_option_buttons[i].visible = i < options.size()
+		_option_buttons[i].disabled = false
+		_option_buttons[i].get_node("Strike").visible = false
 		if i < options.size():
 			_option_buttons[i].text = options[i]
 	_paint_options()
@@ -720,7 +1019,9 @@ func _paint_options(picked := "", answer := "") -> void:
 	for i in options.size():
 		var b := _option_buttons[i]
 		var color := Color(1, 1, 1)
-		if answer != "":
+		if logic.crossed != "" and options[i] == logic.crossed:
+			color = Color(0.5, 0.5, 0.5)
+		elif answer != "":
 			if options[i] == answer:
 				color = Color(0.5, 1.0, 0.5)
 			elif options[i] == picked:
@@ -732,6 +1033,7 @@ func _paint_options(picked := "", answer := "") -> void:
 		b.add_theme_color_override("font_color", color)
 		b.add_theme_color_override("font_hover_color", color)
 		b.add_theme_color_override("font_pressed_color", color)
+		b.add_theme_color_override("font_disabled_color", color)
 		b.text = ("> %s" % options[i]) if (i == selected and answer == "") else options[i]
 
 

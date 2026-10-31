@@ -24,6 +24,7 @@
 		"booger_sniper_gory":                {"tone": "gory"},
 		"color_tv_drop_gory":                {"tone": "gory"}
 	},
+	"loaded_flourish": {"shake": 0.35, "extra_splats": 1, "label": "LOADED"},
 	"fallback": {
 		"attack": {"color": "#8a8a8a", "size": [0.5, 0.5, 0.5]},
 		"counter": {"tone": "slapstick"}

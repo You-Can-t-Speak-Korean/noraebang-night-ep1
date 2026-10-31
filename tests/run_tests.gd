@@ -22,6 +22,10 @@ var checks := 0
 
 func _initialize() -> void:
 	await process_frame
+	var real_save := GameStateScript.SAVE_PATH
+	var real_existed := FileAccess.file_exists(real_save)
+	var real_before := FileAccess.get_file_as_bytes(real_save) if real_existed else PackedByteArray()
+	check(_gs().save_path == GameStateScript.SANDBOX_PATH, "the test runner uses the sandbox save path, not the real one")
 	_test_hearts()
 	_test_nunchi()
 	_test_secrets()
@@ -74,7 +78,9 @@ func _initialize() -> void:
 	_test_fight_logic()
 	await _test_fight_scene()
 	await _test_fight_world()
+	await _test_build_4b()
 	check(FileAccess.get_file_as_bytes(project_path) == project_before, "the fight tests leave project.godot byte-identical")
+	check(FileAccess.file_exists(real_save) == real_existed and (not real_existed or FileAccess.get_file_as_bytes(real_save) == real_before), "the real save was never touched by the run")
 	_clean_world_saves()
 	print("\n%d checks, %d failed" % [checks, failures])
 	quit(1 if failures > 0 else 0)
@@ -2967,8 +2973,9 @@ func _test_song_json() -> void:
 	var same_lines := true
 	for i in lines.size():
 		var d: Dictionary = sheet["lyrics"][i]
+		var speaker: String = "보람" if d["kind"] == "outro" else d["speaker"]  # the build_song.gd outro override
 		if lines[i]["text"] != d["text"] or lines[i]["kind"] != d["kind"] or lines[i]["phase"] != d["phase"] \
-				or lines[i].get("blank", 0) != d["blank"] or lines[i].get("speaker", "") != d["speaker"]:
+				or lines[i].get("blank", 0) != d["blank"] or lines[i].get("speaker", "") != speaker:
 			same_lines = false
 	check(same_lines, "every line matches the sheet in order (text, kind, phase, blank, speaker)")
 	check(lines[0]["kind"] == "intro" and lines[0]["text"] == "자, 다 조용히 해! 내 노래야!" and lines[0]["speaker"] == "은주", "spoken intro")
@@ -3021,7 +3028,7 @@ func _test_song_json() -> void:
 				match_doc = true
 		loaded_ok = loaded_ok and match_doc and _gs().hand.has(item["card"])
 	check(loaded_ok, "loaded: card ids are in the hand, blank numbers and extra options match the sheet")
-	check(blanks.all(func(b): return b["options"].size() == 3), "loaded blanks are not applied yet (every blank still has 3 options)")
+	check(blanks.all(func(b): return b["options"].size() == 3), "the file's blanks all have 3 options (the extra option is added at play time)")
 
 	# Game over anchor and outcomes.
 	check(song["game_over"]["line"] == sheet["anchor"] and song["game_over"]["line"] == "오늘 저녁, 국민학교 1학년 장보람 양이 생일 파티에서 사망했습니다. 다음 소식입니다.", "game-over anchor line is verbatim")
@@ -3042,6 +3049,10 @@ func _test_song_json() -> void:
 	for item in sheet["loaded"]:
 		allowed[item["extra_option"]] = true
 	allowed[sheet["title"]] = true
+	allowed["보람"] = true  # the outro speaker override (build_song.gd)
+	allowed[sheet["survival_line"]] = true
+	for item in sheet["loaded"]:
+		allowed[item["taunt"]] = true
 	allowed[sheet["anchor"]] = true
 	var all_strings := []
 	_strings_of(song, all_strings)
@@ -3337,7 +3348,7 @@ func _test_fight_scene() -> void:
 	check(gs.hearts_halves == 10 and gs.outcomes["eunju"] == "revenge" and gs.scores["eunju"] == 100, "revenge: hearts to 5, outcome and score saved")
 	check(fight._card_splats.visible and fight.bursts >= 2 and fight._card_layer.visible, "the carnage card shows with a blood burst")
 	_press_confirm(fight)
-	check(fight.state == fight.State.END and fight._card_title.text == "END OF BUILD 4a", "after the score screen: the END OF BUILD 4a card")
+	check(fight.state == fight.State.END and fight._card_title.text == "END OF BUILD 4b", "after the score screen: the END OF BUILD 4b card")
 	fight.queue_free()
 	await _frames(2)
 
@@ -3477,3 +3488,319 @@ func _test_fight_world() -> void:
 	await _stop_world(world)
 	gs.new_game()
 	_clean_world_saves()
+
+
+# ── Build 4b: cross-outs, loaded blanks, taunts, lighting, sandbox ───────
+
+func _fresh_fight_state(nunchi := 0, known: Array = []) -> void:
+	var gs := _gs()
+	gs.new_game()
+	for card in known:
+		gs.lose_secret(card, "eunju")
+	if nunchi > 0:
+		gs.add_nunchi(nunchi)
+	gs.begin_fight("eunju")
+
+
+func _freeze_at(fight: Node3D, n: int) -> void:
+	while int(fight.logic.current()["n"]) < n:
+		fight.play_to_freeze()
+		fight.pick_right()
+		fight.finish_beat()
+	fight.play_to_freeze()
+
+
+func _press_key(node: Node, keycode: Key) -> void:
+	var e := InputEventKey.new()
+	e.keycode = keycode
+	e.pressed = true
+	node._unhandled_input(e)
+
+
+func _test_build_4b() -> void:
+	print("Build 4b")
+	var gs := _gs()
+	var song: Dictionary = SongData.load_file(SONG_PATH)
+	var sheet := SongSheet.parse(FileAccess.get_file_as_string(SHEET_PATH))
+
+	# Sandboxed saves.
+	var real := GameStateScript.SAVE_PATH
+	var box := GameStateScript.SANDBOX_PATH
+	check(GameStateScript.resolve_save_path(PackedStringArray(["--fight", "eunju", "--fight-auto", "right"])) == box, "sandbox: --fight-auto")
+	check(GameStateScript.resolve_save_path(PackedStringArray(["--capture-fight"])) == box and GameStateScript.resolve_save_path(PackedStringArray(["--capture-hud"])) == box, "sandbox: --capture-*")
+	check(GameStateScript.resolve_save_path(PackedStringArray(), PackedStringArray(["-s", "res://tests/run_tests.gd"])) == box, "sandbox: the test runner (-s script run)")
+	check(GameStateScript.resolve_save_path(PackedStringArray(["--sandbox"])) == box, "sandbox: --sandbox")
+	check(GameStateScript.resolve_save_path(PackedStringArray(["--fight", "eunju", "--new-game"])) == real and GameStateScript.resolve_save_path(PackedStringArray()) == real, "no sandbox arg: the real save path")
+	check(box.begins_with("user://sandbox/"), "the sandbox path is under user://sandbox/")
+
+	# Launch args.
+	var WorldScript = load("res://scripts/world.gd")
+	var a: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--nunchi", "3", "--known", "dad_country,mom_salary,dad_drinking", "--fight-auto", "cross"]))
+	check(a["nunchi"] == 3 and a["known"] == ["dad_country", "mom_salary", "dad_drinking"] and a["fight_auto"] == "cross", "--nunchi, --known and --fight-auto cross are parsed")
+	var d: Dictionary = WorldScript.parse_launch_args(PackedStringArray([]))
+	check(d["nunchi"] == -1 and d["known"].is_empty(), "no --nunchi / --known by default")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--nunchi", "x"]))["nunchi"] == -1, "a bad --nunchi is ignored")
+
+	# Cross-outs (logic).
+	_fresh_fight_state(2)
+	var logic := FightLogic.new(song, 5, gs)
+	var blank := logic.current()
+	check(logic.can_cross_out(), "a cross-out is possible with 눈치")
+	var removed := logic.cross_out()
+	check(removed != "" and removed != blank["answer"] and blank["options"].has(removed), "it removes one wrong option, not the answer")
+	check(gs.nunchi == 1, "it costs 1 눈치")
+	check(not logic.can_cross_out() and logic.cross_out() == "" and gs.nunchi == 1, "only one cross-out per blank, and no second charge")
+	check(logic.answer(removed).is_empty() and logic.index == 0, "the crossed-out option can't be picked")
+	check(logic.answer(blank["answer"])["crossed"], "the result notes the cross-out")
+	check(logic.can_cross_out(), "the next blank allows one again")
+	var again := FightLogic.new(song, 5, gs)
+	check(again.cross_out() == removed and gs.nunchi == 0, "the same seed crosses out the same option")
+	check(not FightLogic.new(song, 5, gs).can_cross_out(), "no cross-out at 0 눈치")
+	var never_answer := true
+	for sd in 40:
+		_fresh_fight_state(7)
+		var lg := FightLogic.new(song, sd, gs)
+		while lg.has_blank():
+			never_answer = never_answer and lg.cross_out() != lg.current()["answer"]
+			lg.answer(lg.current()["answer"])
+	check(never_answer, "across 40 seeds the answer is never crossed out")
+
+	# Cross-outs in the scene.
+	_fresh_fight_state(3)
+	var fight := _make_fight()
+	await _frames(2)
+	fight.play_to_freeze()
+	var nunchi_before: int = gs.nunchi
+	_press_key(fight, KEY_X)
+	var crossed_i: int = fight.options.find(fight.logic.crossed)
+	check(crossed_i != -1 and fight._option_buttons[crossed_i].disabled and fight._option_buttons[crossed_i].get_node("Strike").visible, "X strikes through one option and disables it")
+	check(gs.nunchi == nunchi_before - 1 and fight._cross_hint.text == fight.HINT_USED, "it cost 1 눈치 and the hint says it is used")
+	_press_key(fight, KEY_X)
+	check(gs.nunchi == nunchi_before - 1, "a second X on the same blank does nothing")
+	var skipped := true
+	fight.selected = 0
+	for i in 8:
+		var down := InputEventAction.new()
+		down.action = "ui_down"
+		down.pressed = true
+		fight._unhandled_input(down)
+		skipped = skipped and fight.options[fight.selected] != fight.logic.crossed
+	check(skipped, "the highlight skips the crossed-out option")
+	fight.pick(crossed_i)
+	check(fight.state == fight.State.FREEZE, "picking the crossed-out option does nothing")
+	fight.pick_right()
+	fight.finish_beat()
+	fight.play_to_freeze()
+	check(not fight._option_buttons[0].disabled and not fight._option_buttons[1].disabled and not fight._option_buttons[2].disabled, "the next blank starts with every option open")
+	# A click on the HUD's 눈치 eyes.
+	var hud: Node = load("res://scenes/hud.tscn").instantiate()
+	root.add_child(hud)
+	await _frames(3)
+	var eyes: Control = hud.nunchi
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	click.position = eyes.get_global_rect().get_center()
+	var before: int = gs.nunchi
+	fight._unhandled_input(click)
+	check(gs.nunchi == before - 1 and fight.logic.crossed != "", "a click on the 눈치 eyes crosses out too")
+	fight.pick_right()
+	fight.finish_beat()
+	fight.play_to_freeze()
+	click.position = Vector2(5, 700)
+	fight._unhandled_input(click)
+	check(fight.logic.crossed == "", "a click elsewhere does not")
+	hud.queue_free()
+	fight.queue_free()
+	await _frames(2)
+
+	# 0 눈치: blocked, with a hint.
+	_fresh_fight_state(0)
+	fight = _make_fight()
+	await _frames(1)
+	fight.play_to_freeze()
+	_press_key(fight, KEY_X)
+	check(fight.logic.crossed == "" and gs.nunchi == 0 and fight._cross_hint.text == fight.HINT_NO_NUNCHI, "at 0 눈치 a cross-out is blocked and the hint says why")
+	fight.queue_free()
+	await _frames(2)
+
+	# Revenge survives cross-outs; a fight game over restores the 눈치.
+	_fresh_fight_state(7)
+	fight = _make_fight(3, "cross")
+	await _frames(1)
+	var guard := 0
+	while fight.state != fight.State.END and guard < 6000:
+		fight.step(0.1)
+		guard += 1
+	check(fight.last_result["outcome"] == "revenge" and fight.last_result["score"] == 100 and gs.hearts_halves == 10, "--fight-auto cross: a cross-out on every blank is still a revenge win")
+	check(gs.nunchi == 0 and fight.logic.wrong == 0, "...and it spent 7 눈치 (one per blank until it ran out)")
+	fight.queue_free()
+	await _frames(2)
+	_fresh_fight_state(4)
+	fight = _make_fight()
+	await _frames(1)
+	fight.play_to_freeze()
+	fight.cross_out()
+	check(gs.nunchi == 3, "a cross-out before losing")
+	fight.pick_wrong()
+	fight.finish_beat()
+	fight.run_scripted(func(_n): return false)
+	check(fight.state == fight.State.GAME_OVER, "then the fight is lost")
+	fight.retry()
+	check(gs.nunchi == 4 and gs.hearts_halves == 10, "a fight game over restores the fight-start 눈치")
+	fight.queue_free()
+	await _frames(2)
+
+	# Loaded blanks.
+	var loaded_map := {}
+	for item in song["loaded"]:
+		loaded_map[item["card"]] = int(item["blank"])
+	check(loaded_map == {"dad_country": 4, "mom_salary": 6, "dad_drinking": 9}, "the three cards map to blanks 4, 6 and 9")
+	var from_sheet := {}
+	for item in sheet["loaded"]:
+		from_sheet[item["blank"]] = item["extra_option"]
+	var matches := true
+	for item in song["loaded"]:
+		matches = matches and from_sheet[int(item["blank"])] == item["extra_option"]
+	check(matches, "...with the sheet's extra options")
+	for card in loaded_map:
+		_fresh_fight_state(0, [card])
+		var lg2 := FightLogic.new(song, 9, gs)
+		var four_ok := true
+		var others_three := true
+		for b in SongData.flat_blanks(song):
+			var opts := lg2.options_for(b)
+			if int(b["n"]) == loaded_map[card]:
+				var extra := ""
+				for item in song["loaded"]:
+					if item["card"] == card:
+						extra = item["extra_option"]
+				four_ok = four_ok and opts.size() == 4 and opts.has(extra)
+			else:
+				others_three = others_three and opts.size() == 3
+		check(four_ok and others_three, "%s known: blank %d has 4 options with the JSON's extra option, the others 3" % [card, loaded_map[card]])
+	_fresh_fight_state()
+	var plain := FightLogic.new(song, 9, gs)
+	check(SongData.flat_blanks(song).all(func(b): return plain.options_for(b).size() == 3), "no card known: every blank has 3 options")
+	_fresh_fight_state(1, ["dad_country"])
+	fight = _make_fight()
+	await _frames(1)
+	_freeze_at(fight, 4)
+	check(fight.options.size() == 4 and fight.options.has("설탕"), "in the scene blank 4 shows 4 options with 설탕")
+	fight.cross_out()
+	check(fight.options.size() == 4 and fight.options.filter(func(o): return o != fight.logic.crossed).size() == 3 and fight.logic.crossed != "소금", "a cross-out on a loaded blank leaves 3 open options")
+	var bursts_before: int = fight.bursts
+	fight.pick_wrong()
+	check(fight.last_result["loaded"] and fight.last_result["card"] == "dad_country" and fight.loaded_flourishes == 1, "a wrong answer on it lands with the flourish")
+	check(fight.bursts == bursts_before + 2 and fight.shakes == 1 and fight._loaded_label.visible and fight._loaded_label.text == "LOADED: dad_country", "extra blood splat, screen shake and the LOADED label with the card id")
+	fight.finish_beat()
+	check(not fight._loaded_label.visible, "the label goes with the beat")
+	fight.queue_free()
+	await _frames(2)
+	_fresh_fight_state(0, ["dad_country"])
+	fight = _make_fight()
+	await _frames(1)
+	_freeze_at(fight, 4)
+	var splats_before: int = fight.bursts
+	fight.pick_right()
+	check(fight.loaded_flourishes == 0 and fight.bursts == splats_before, "a right answer on a loaded blank has no flourish")
+	fight.queue_free()
+	await _frames(2)
+
+	# Taunts.
+	var all_cards := ["dad_country", "mom_salary", "dad_drinking"]
+	var taunt_of := {}
+	for item in sheet["loaded"]:
+		taunt_of[item["blank"]] = item["taunt"]
+	_fresh_fight_state(0, ["dad_drinking", "dad_country"])
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(n): return n != 1)
+	check(fight.card_kind == "survival" and fight.aftermath.size() == 3, "survival: the line plus 2 taunts for 2 known cards")
+	check(fight.aftermath[0]["text"] == "흥. 다음엔 안 불러." and sheet["survival_line"] == "흥. 다음엔 안 불러." and FileAccess.get_file_as_string(SHEET_PATH).contains("\"흥. 다음엔 안 불러.\""), "first 은주's line, as in the sheet")
+	check(fight.aftermath[1]["text"] == taunt_of[4] and fight.aftermath[2]["text"] == taunt_of[9], "then the taunts in card-list order (아빠 나라, then 아빠 주량), whatever order they were learned")
+	check(fight.aftermath.all(func(l): return l["speaker"] == "은주"), "all spoken by 은주")
+	_press_confirm(fight)
+	check(fight.state == fight.State.AFTERMATH and fight._after_panel.visible and fight._after_text.text == "흥. 다음엔 안 불러.", "Enter on the survival card opens the dialogue panel")
+	_press_confirm(fight)
+	check(fight._after_text.text == taunt_of[4], "Enter shows the next taunt")
+	_press_confirm(fight)
+	check(fight._after_text.text == taunt_of[9], "...and the next")
+	var left := InputEventMouseButton.new()
+	left.button_index = MOUSE_BUTTON_LEFT
+	left.pressed = true
+	fight._unhandled_input(left)
+	check(fight.state == fight.State.END and fight._card_title.text == "END OF BUILD 4b" and not fight._after_panel.visible, "a click advances; then END OF BUILD 4b")
+	fight.queue_free()
+	await _frames(2)
+	_fresh_fight_state(0, all_cards)
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(_n): return true)
+	check(fight.card_kind == "revenge" and fight.aftermath.is_empty(), "revenge: no taunts")
+	_press_confirm(fight)
+	check(fight.state == fight.State.END, "revenge goes straight to the end card")
+	fight.queue_free()
+	await _frames(2)
+	_fresh_fight_state()
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(n): return n != 2)
+	check(fight.card_kind == "survival" and fight.aftermath.size() == 1 and fight.aftermath[0]["card"] == "", "survival with no known cards: only 은주's line, no taunts")
+	fight.queue_free()
+	await _frames(2)
+	_fresh_fight_state(0, all_cards)
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(_n): return false)
+	check(fight.state == fight.State.GAME_OVER and fight.aftermath.is_empty(), "a lost fight has no taunts")
+	fight.queue_free()
+	await _frames(2)
+
+	# Speakers and text from the sheet.
+	var intro: Dictionary = song["lines"][0]
+	var outro: Dictionary = song["lines"][-1]
+	check(intro["speaker"] == "은주" and intro["text"] == "자, 다 조용히 해! 내 노래야!", "intro: 은주, as in the sheet")
+	check(outro["speaker"] == "보람" and outro["text"] == "잘 먹겠습니다." and sheet["lyrics"][-1]["text"] == outro["text"] and sheet["lyrics"][0]["text"] == intro["text"], "outro: 보람, the text as in the sheet")
+	check(sheet["lyrics"][-1]["speaker"] == "은주", "the sheet itself still says 은주 for the outro (the override lives in build_song.gd)")
+	check(FileAccess.get_file_as_string("res://tools/build_song.gd").contains("OUTRO_SPEAKER"), "the builder applies the outro override")
+	check(song["outcomes"]["survival"]["line"] == sheet["survival_line"], "the song file carries the sheet's survival line")
+	check(song["loaded"].all(func(item): return item["taunt"] != "" and not item["taunt"].begins_with("\"")), "every loaded entry has its taunt, quote marks stripped")
+	check(SongData.validate(song).is_empty(), "the rebuilt song validates")
+
+	# Lighting.
+	check(song["lighting"] == {"1": "normal", "2": "normal", "3": "flicker", "4": "frantic"}, "lighting map: phases 1-2 normal, 3 flicker, 4 frantic")
+	var lit := []
+	for b in SongData.flat_blanks(song):
+		lit.append(b.get("light", ""))
+	check(lit == ["", "", "", "", "", "", "", "blackout", "", ""], "only blank 8 has a light override: blackout")
+	_fresh_fight_state()
+	fight = _make_fight()
+	await _frames(1)
+	check(fight.lighting == "normal" and is_equal_approx(fight._sun.light_energy, fight.SUN_ENERGY), "the intro is normal light")
+	var modes := {}
+	for n in range(1, 11):
+		fight.play_to_freeze()
+		modes[n] = fight.lighting
+		if n == 8:
+			check(fight._sun.light_energy == 0.0 and fight._env.ambient_light_energy == 0.0 and fight._light_overlay.color.a > 0.5, "blank 8: the lights go off on the reveal")
+			fight.step(2.0)
+			check(fight.lighting == "blackout" and fight._sun.light_energy == 0.0, "...and stay off while the attack creeps")
+			fight.pick_right()
+			fight.step(0.8)
+			check(fight.lighting == "blackout" and fight._sun.light_energy == 0.0, "...through the counter")
+			fight.finish_beat()
+			check(fight.lighting == "flicker" and fight._light_override == "", "...then the phase lighting resumes")
+		else:
+			fight.pick_right()
+			fight.finish_beat()
+	check([modes[1], modes[2], modes[3], modes[4], modes[5], modes[6], modes[7], modes[9], modes[10]] == ["normal", "normal", "normal", "normal", "normal", "normal", "flicker", "frantic", "frantic"], "phase lighting at each blank: normal, normal, flicker (7), frantic (9, 10)")
+	check(modes[8] == "blackout", "blank 8 reads blackout")
+	var seen_energies := {}
+	for i in 60:
+		fight.step(0.05)
+		seen_energies[snappedf(fight._sun.light_energy, 0.01)] = true
+	check(fight._sun.light_color.r > 0.9 and fight._sun.light_color.g < 0.4 and seen_energies.size() >= 2 and not seen_energies.keys().any(func(e): return e > 0.5), "frantic is a dim red that flickers")
+	fight.queue_free()
+	await _frames(2)
+	gs.new_game()

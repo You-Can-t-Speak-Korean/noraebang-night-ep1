@@ -30,6 +30,7 @@ var _pupil := PackedVector2Array()
 
 
 func _ready() -> void:
+	add_to_group("nunchi_display")  # the fight's click-to-cross-out looks the eyes up here
 	_eye = eye_polygon(eye_width, eye_height)
 	var iris_r := eye_height * 0.36
 	var center := Vector2(eye_width * IRIS_AT, eye_height / 2.0)

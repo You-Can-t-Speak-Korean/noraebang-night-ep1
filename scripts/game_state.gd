@@ -23,6 +23,11 @@ const OUTCOMES: Array[String] = ["revenge", "survival"]
 ## Fields listed here survive death_reset(). Empty for now.
 const PERSISTS_THROUGH_DEATH: Array[String] = []
 
+const SAVE_PATH := "user://noraebang_night_save.json"
+## Throwaway saves: --sandbox, --fight-auto, any --capture* mode and any `-s` script run
+## (the test runner) use this and never read or write SAVE_PATH.
+const SANDBOX_PATH := "user://sandbox/noraebang_night_save.json"
+
 const TUNING_PATH := "res://data/config/tuning.json"
 const HAND_PATH := "res://data/secrets/act1_hand.json"
 const LEAKS_PATH := "res://data/secrets/act1_leaks.json"
@@ -65,12 +70,28 @@ var in_fight: bool = false
 var fight_snapshot: Dictionary = {}    # {"hearts_halves": int, "nunchi": int}
 
 ## Where save_game()/load_game() read and write. Tests override this.
-var save_path: String = "user://noraebang_night_save.json"
+var save_path: String = SAVE_PATH
 
 
 func _ready() -> void:
+	save_path = resolve_save_path(OS.get_cmdline_user_args(), OS.get_cmdline_args())
 	load_data()
 	new_game()
+
+
+# ── Save path ──────────────────────────────────────────────────────────
+
+## True when these launch args ask for a throwaway save.
+static func wants_sandbox(user_args: PackedStringArray, engine_args: PackedStringArray = PackedStringArray()) -> bool:
+	for a in user_args:
+		if a == "--sandbox" or a == "--fight-auto" or a.begins_with("--capture"):
+			return true
+	return engine_args.has("-s") or engine_args.has("--script")
+
+
+## The save file a launch with these args uses (see SANDBOX_PATH).
+static func resolve_save_path(user_args: PackedStringArray, engine_args: PackedStringArray = PackedStringArray()) -> String:
+	return SANDBOX_PATH if wants_sandbox(user_args, engine_args) else SAVE_PATH
 
 
 # ── Data loading ───────────────────────────────────────────────────────

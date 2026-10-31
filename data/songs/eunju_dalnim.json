@@ -4,6 +4,12 @@
 	"boss": "eunju",
 	"countdown": 5.0,
 	"length": 62.0,
+	"lighting": {
+		"1": "normal",
+		"2": "normal",
+		"3": "flicker",
+		"4": "frantic"
+	},
 	"phases": [
 		{
 			"phase": 1,
@@ -131,7 +137,8 @@
 					"answer": "깜깜해요",
 					"teaches": "Adjectives",
 					"attack": "mic_cord_electrocution",
-					"counter": "mic_cord_electrocution_gory"
+					"counter": "mic_cord_electrocution_gory",
+					"light": "blackout"
 				}
 			]
 		},
@@ -307,24 +314,27 @@
 			"phase": 4,
 			"time": 59.0,
 			"text": "잘 먹겠습니다.",
-			"speaker": "은주"
+			"speaker": "보람"
 		}
 	],
 	"loaded": [
 		{
 			"card": "dad_country",
 			"blank": 4,
-			"extra_option": "설탕"
+			"extra_option": "설탕",
+			"taunt": "너네 나라에도 계란 있어?"
 		},
 		{
 			"card": "mom_salary",
 			"blank": 6,
-			"extra_option": "적어요"
+			"extra_option": "적어요",
+			"taunt": "너네 엄마 월급으로 케이크 살 수 있어?"
 		},
 		{
 			"card": "dad_drinking",
 			"blank": 9,
-			"extra_option": "마시고 싶어요"
+			"extra_option": "마시고 싶어요",
+			"taunt": "너네 아빠는 달 말고 소주 먹지?"
 		}
 	],
 	"outcomes": {
@@ -332,7 +342,9 @@
 			"card": "[placeholder] REVENGE: carnage card"
 		},
 		"survival": {
-			"card": "[placeholder] SURVIVAL: quelled card"
+			"card": "[placeholder] SURVIVAL: quelled card",
+			"speaker": "은주",
+			"line": "흥. 다음엔 안 불러."
 		}
 	},
 	"game_over": {

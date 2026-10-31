@@ -7,6 +7,8 @@ extends RefCounted
 
 const DIR := "res://data/songs"
 const BLANK_MARK := "___"
+## Lighting modes a song may name (Fight maps each to its lights). "blackout" is for a blank's "light".
+const LIGHT_MODES: Array[String] = ["normal", "flicker", "frantic", "blackout"]
 
 
 ## The parsed song, or {} (with a push_error) when the file is missing or invalid.
@@ -48,6 +50,11 @@ static func flat_blanks(song: Dictionary) -> Array:
 	return out
 
 
+## The lighting mode of phase `phase` ("normal" when the song names none).
+static func phase_lighting(song: Dictionary, phase: int) -> String:
+	return str(song.get("lighting", {}).get(str(phase), "normal"))
+
+
 ## Human-readable problems; empty when the song is usable.
 static func validate(song: Dictionary) -> Array[String]:
 	var errors: Array[String] = []
@@ -79,6 +86,18 @@ static func validate(song: Dictionary) -> Array[String]:
 		if float(b.get("time", -1.0)) < last_time:
 			errors.append("blank %d: times must not go backwards" % n)
 		last_time = float(b.get("time", -1.0))
+	for b in blanks:
+		if b.has("light") and not LIGHT_MODES.has(str(b["light"])):
+			errors.append("blank %d: unknown light '%s'" % [int(b["n"]), b["light"]])
+	for phase_key in song.get("lighting", {}):
+		if not LIGHT_MODES.has(str(song["lighting"][phase_key])) or str(song["lighting"][phase_key]) == "blackout":
+			errors.append("lighting for phase %s must be normal, flicker or frantic" % phase_key)
+	for item in song.get("loaded", []):
+		var target: Array = blanks.filter(func(b): return int(b["n"]) == int(item.get("blank", -1)))
+		if target.is_empty():
+			errors.append("loaded card '%s' names a blank that does not exist" % item.get("card", ""))
+		elif str(item.get("extra_option", "")) == "" or target[0]["options"].has(item["extra_option"]):
+			errors.append("loaded card '%s': extra_option must be a new option" % item.get("card", ""))
 	var line_time := -1.0
 	for l in song["lines"]:
 		if not (l.has("text") and l.has("time") and l.has("phase")):

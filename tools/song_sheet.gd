@@ -1,6 +1,6 @@
 # Reads a song sheet (docs/songs/songsheet-*.md) into plain data: the lyrics code
-# block (§2), the blank table (§3), the loaded-blank table (§4) and the game-over
-# anchor line (§5). Used by tools/build_song.gd to write the song JSON and by the
+# block (§2), the blank table (§3), the loaded-blank table (§4, with each taunt), the
+# survival win's spoken line and the game-over anchor line (§5). Used by tools/build_song.gd to write the song JSON and by the
 # tests to check that JSON against the doc. Knows nothing about any one song.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -13,16 +13,19 @@ const PHASE_NAMES := {"Verse": 1, "Chorus": 2, "Bridge": 3, "Final": 4}
 ## {"title", "lyrics": [{"kind": "intro"|"lyric"|"outro", "phase": int, "section": String,
 ## "speaker": String, "text": String (blank as "___"), "blank": int (0 = none), "answer": String}],
 ## "blanks": {n: {"n", "phase_name", "line", "options", "answer", "teaches"}},
-## "loaded": [{"card_name", "blank", "extra_option"}], "anchor": String, "errors": [String]}
+## "loaded": [{"card_name", "blank", "extra_option", "taunt" (quote marks stripped)}],
+## "survival_line": String (the first quoted line under §5's Survival win), "anchor": String, "errors": [String]}
 static func parse(markdown: String) -> Dictionary:
-	var out := {"title": "", "lyrics": [], "blanks": {}, "loaded": [], "anchor": "", "errors": []}
+	var out := {"title": "", "lyrics": [], "blanks": {}, "loaded": [], "survival_line": "", "anchor": "", "errors": []}
 	var in_block := false
+	var in_survival := false
 	var phase := 0
 	var section := ""
 	var kind := ""
 	var header := RegEx.create_from_string("^\\[(Intro|Outro|Phase (\\d) — ([^—\\]]+?))\\s*(?:—.*)?\\]")
 	var blank_re := RegEx.create_from_string("^(.*)⟦([^⟧]+)⟧(.*?)\\s*\\[(\\d+)\\]\\s*$")
 	var anchor_re := RegEx.create_from_string("^>\\s*\\*\"(.+)\"\\*\\s*$")
+	var quote_re := RegEx.create_from_string("\"([^\"]+)\"")
 	for raw in markdown.split("\n"):
 		var line: String = raw.strip_edges(false, true)
 		if line.begins_with("```"):
@@ -66,6 +69,12 @@ static func parse(markdown: String) -> Dictionary:
 				entry["blank"] = int(b.get_string(4))
 			out["lyrics"].append(entry)
 			continue
+		if line.begins_with("#"):
+			in_survival = line.contains("Survival win")
+		elif in_survival and out["survival_line"] == "":
+			var q := quote_re.search(line)
+			if q != null:
+				out["survival_line"] = q.get_string(1)
 		var a := anchor_re.search(line)
 		if a != null:
 			out["anchor"] = a.get_string(1)
@@ -84,12 +93,17 @@ static func parse(markdown: String) -> Dictionary:
 						hangul = i
 						break
 				out["loaded"].append({"card_name": cells[0].substr(hangul) if hangul != -1 else cells[0],
-						"blank": int(cells[1].trim_prefix("#").split(" ")[0]), "extra_option": cells[2]})
+						"blank": int(cells[1].trim_prefix("#").split(" ")[0]), "extra_option": cells[2],
+							"taunt": _strip_quotes(cells[3]) if cells.size() > 3 else ""})
 	if out["title"] == "" or out["lyrics"].is_empty():
 		out["errors"].append("no lyrics block found")
 	if out["anchor"] == "":
 		out["errors"].append("no game-over anchor line found")
 	return out
+
+
+static func _strip_quotes(text: String) -> String:
+	return text.strip_edges().trim_prefix("\"").trim_suffix("\"").trim_prefix("“").trim_suffix("”").strip_edges()
 
 
 static func _split_options(cell: String) -> Array[String]:

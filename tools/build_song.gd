@@ -3,6 +3,8 @@
 # The attack ids below are the only hand-written part: the sheet describes the
 # attacks in English prose, so each gets a snake_case id here. Counter ids follow
 # Systems Spec §6.5: the attack id plus _slapstick or _gory (the sheet's 🤡 / 🩸).
+# The phase lighting and blank 8's blackout are hand-written the same way (the sheet
+# describes them only in prose: "lights flicker", "the lights go out", "frantic").
 # Placeholder line times come from tuning.json (song_first_line_time, song_line_gap).
 # Stops with a message, writing nothing, if the sheet is inconsistent with itself.
 #
@@ -29,6 +31,13 @@ const ATTACKS := {
 	9: ["booger_sniper", "gory"],
 	10: ["color_tv_drop", "gory"],
 }
+## phase -> lighting mode (the fight maps these to lights; see Fight.lighting)
+const LIGHTING := {1: "normal", 2: "normal", 3: "flicker", 4: "frantic"}
+## blank number -> a lighting mode that overrides the phase's from the blank's reveal to the end of its counter
+const BLANK_LIGHT := {8: "blackout"}
+## The sheet has 은주 speak the outro, but the game cut is sung by 보람, so she says
+## 「잘 먹겠습니다.」 herself. The intro stays 은주's. The sheet is left as it is.
+const OUTRO_SPEAKER := "보람"
 
 
 func _initialize() -> void:
@@ -66,8 +75,9 @@ func build() -> Array[String]:
 			t = cfg["first_line_time"] + slot * cfg["line_gap"]
 			slot += 1
 		var entry := {"kind": l["kind"], "phase": l["phase"], "time": snappedf(t, 0.001), "text": l["text"]}
-		if l["speaker"] != "":
-			entry["speaker"] = l["speaker"]
+		var speaker: String = OUTRO_SPEAKER if l["kind"] == "outro" else l["speaker"]
+		if speaker != "":
+			entry["speaker"] = speaker
 		if l["blank"] != 0:
 			entry["blank"] = l["blank"]
 			line_of_blank[l["blank"]] = entry
@@ -98,6 +108,8 @@ func build() -> Array[String]:
 		var entry := {"n": n, "time": lyric["time"], "line": lyric["text"], "options": b["options"],
 				"answer": b["answer"], "teaches": b["teaches"], "attack": attack,
 				"counter": "%s_%s" % [attack, ATTACKS[n][1]]}
+		if BLANK_LIGHT.has(n):
+			entry["light"] = BLANK_LIGHT[n]
 		if phases.is_empty() or phases[-1]["phase"] != phase:
 			phases.append({"phase": phase, "section": _section_of(sheet, phase), "blanks": []})
 		phases[-1]["blanks"].append(entry)
@@ -107,7 +119,15 @@ func build() -> Array[String]:
 		if not names.has(item["card_name"]):
 			errors.append("loaded card '%s' is not in %s" % [item["card_name"], CARDS])
 			continue
-		loaded.append({"card": names[item["card_name"]], "blank": item["blank"], "extra_option": item["extra_option"]})
+		if item["taunt"] == "":
+			errors.append("loaded card '%s' has no taunt in the sheet" % item["card_name"])
+		loaded.append({"card": names[item["card_name"]], "blank": item["blank"], "extra_option": item["extra_option"],
+				"taunt": item["taunt"]})
+	if sheet["survival_line"] == "":
+		errors.append("no survival win line found in the sheet's §5")
+	var lighting := {}
+	for phase in LIGHTING:
+		lighting[str(phase)] = LIGHTING[phase]
 	if not errors.is_empty():
 		return errors
 
@@ -118,12 +138,14 @@ func build() -> Array[String]:
 		"boss": BOSS,
 		"countdown": COUNTDOWN,
 		"length": snappedf(last["time"] + cfg["line_gap"], 0.001),
+		"lighting": lighting,
 		"phases": phases,
 		"lines": lines,
 		"loaded": loaded,
 		"outcomes": {
 			"revenge": {"card": "[placeholder] REVENGE: carnage card"},
-			"survival": {"card": "[placeholder] SURVIVAL: quelled card"},
+			"survival": {"card": "[placeholder] SURVIVAL: quelled card", "speaker": lines[0].get("speaker", ""),
+					"line": sheet["survival_line"]},
 		},
 		"game_over": {"anchor": "문태식", "line": sheet["anchor"]},
 	}
