@@ -84,7 +84,7 @@ func _ready() -> void:
 ## True when these launch args ask for a throwaway save.
 static func wants_sandbox(user_args: PackedStringArray, engine_args: PackedStringArray = PackedStringArray()) -> bool:
 	for a in user_args:
-		if a == "--sandbox" or a == "--fight-auto" or a.begins_with("--capture"):
+		if a == "--sandbox" or a == "--fight-auto" or a == "--check-song" or a == "--mark-song" or a.begins_with("--capture"):
 			return true
 	return engine_args.has("-s") or engine_args.has("--script")
 

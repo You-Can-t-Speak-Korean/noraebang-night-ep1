@@ -11,12 +11,16 @@
 #   Launch options: --new-game ignores any save; --seed N forces the spot layout.
 #   Capture the 골목길 with 현정, the TV and the news line:
 #     godot --path . -- --capture-alley
+#   Audition the song's label timing (sandboxed; the audio backend unless --no-audio):
+#     godot --path . -- --check-song eunju [--no-audio]
 #   Capture the fight (blank freeze, right, wrong, revenge, survival, game over):
 #     godot --path . -- --capture-fight
 #   Fights: --fight eunju starts that boss's fight (saves at its start; relaunching
 #   mid-fight resumes there; --new-game ignores the save); --fight-auto
 #   right|wrong|mixed|cross answers by itself (cross: a cross-out on every blank, then right).
-#   --fight-auto, every --capture-* mode and --sandbox use a throwaway save under
+#   --no-audio plays no track (the silent clock). Audio is also off for --fight-auto, every
+#   --capture-* mode, script runs and a headless display.
+#   --fight-auto, every --capture-* mode, --check-song and --sandbox use a throwaway save under
 #   user://sandbox/ and never touch the real one.
 #   Dev only: --nunchi N sets the 눈치 (0-cap); --known a,b makes the fight's boss know those
 #   card ids (loaded blanks and taunts).
@@ -36,6 +40,7 @@ const HudScene := preload("res://scenes/hud.tscn")
 const DialogueBoxScene := preload("res://scenes/ui/dialogue_box.tscn")
 const DirectorScript := preload("res://scripts/scene_director.gd")
 const SpawnDealerScript := preload("res://scripts/spawn_dealer.gd")
+const TuningScript := preload("res://scripts/tuning.gd")
 const KeyPromptScript := preload("res://scripts/key_prompt.gd")
 const FightScene := preload("res://scenes/fight.tscn")
 const SKIP_TARGETS: Array[String] = ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon"]
@@ -93,6 +98,8 @@ var labels_visible := true
 var end_card_shown := false
 ## The running fight (Build 4a), or null. A fight replaces the map: no player, no room.
 var fight: Node3D = null
+## The blank-timing tap tool (--mark-song), while it runs.
+var tap_tool: Node = null
 ## How many times the trap flash has fired (the flash itself is a placeholder).
 var flashes := 0
 
@@ -131,7 +138,7 @@ func _ready() -> void:
 	capture_mode = capturing
 	if capturing:
 		begin_progress = false
-	_start_game(args["new_game"] or capturing or args["fight_auto"] != "")
+	_start_game(args["new_game"] or capturing or args["fight_auto"] != "" or args["check_song"] != "" or args["mark_song"] != "")
 	if args["skip_to"] != "":
 		_apply_skip_to(args["skip_to"])
 	if args["hearts_halves"] != -1:
@@ -140,10 +147,17 @@ func _ready() -> void:
 		set_nunchi_dev(args["nunchi"])
 	if not args["known"].is_empty():
 		set_known_dev(args["known"], args["fight"] if args["fight"] != "" else GameState.current_boss)
+	if args["mark_song"] != "":
+		if start_tap_tool(args["mark_song"], OS.get_cmdline_user_args(), false) == null:
+			get_tree().quit(1)
+		return
 	hud = HudScene.instantiate()
 	add_child(hud)
 	if args["capture_fight"]:
 		_run_capture_fight()
+		return
+	if args["check_song"] != "":
+		start_fight(args["check_song"], "", false, false, true)
 		return
 	if args["fight"] != "" or GameState.in_fight:
 		# --fight <boss> starts it; a saved fight (relaunch mid-fight) resumes at its start.
@@ -183,20 +197,32 @@ func _ready() -> void:
 ## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool,
 ## "capture_dialogue": bool, "capture_alley": bool, "capture_rooms": bool, "no_labels": bool,
 ## "capture_fight": bool, "fight": String boss id ("" = none), "fight_auto": "" | "right" | "wrong" | "mixed",
-## "hearts_halves": int (-1 = none), "skip_to": String ("" = none),
+## "no_audio": bool, "check_song": String boss id ("" = none), "mark_song": String boss id ("" = none), "hearts_halves": int (-1 = none), "skip_to": String ("" = none),
 ## "nunchi": int (-1 = none), "known": Array[String] card ids}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
 			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args, "capture_rooms": "--capture-rooms" in args,
 			"capture_fight": "--capture-fight" in args, "fight": "", "fight_auto": "",
-			"no_labels": "--no-labels" in args, "hearts_halves": -1, "skip_to": "", "nunchi": -1, "known": []}
+			"no_labels": "--no-labels" in args, "no_audio": "--no-audio" in args, "check_song": "", "mark_song": "", "hearts_halves": -1, "skip_to": "", "nunchi": -1, "known": []}
 	var at := args.find("--seed")
 	if at != -1:
 		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
 			parsed["seed"] = int(args[at + 1])
 		else:
 			push_warning("World: --seed needs a whole number >= 0; ignoring it")
+	at = args.find("--check-song")
+	if at != -1:
+		if at + 1 < args.size() and not args[at + 1].begins_with("--"):
+			parsed["check_song"] = args[at + 1]
+		else:
+			push_warning("World: --check-song needs a boss id (e.g. eunju); ignoring it")
+	at = args.find("--mark-song")
+	if at != -1:
+		if at + 1 < args.size() and not args[at + 1].begins_with("--"):
+			parsed["mark_song"] = args[at + 1]
+		else:
+			push_warning("World: --mark-song needs a boss id (e.g. eunju); ignoring it")
 	at = args.find("--hearts")
 	if at != -1:
 		parsed["hearts_halves"] = hearts_arg_to_halves(args[at + 1]) if at + 1 < args.size() else -1
@@ -332,7 +358,7 @@ func begin() -> void:
 ## Starts `boss_id`'s fight (its song file is found by the "boss" field) and saves at its
 ## start. `resume`: continue a saved fight from its start-of-fight snapshot instead of
 ## taking a new one. `manual`: the caller steps the fight (captures). Null if no song.
-func start_fight(boss_id: String, auto := "", resume := false, manual := false) -> Node3D:
+func start_fight(boss_id: String, auto := "", resume := false, manual := false, check := false) -> Node3D:
 	var path := SongData.find_for_boss(boss_id)
 	var song := SongData.load_file(path) if path != "" else {}
 	if song.is_empty():
@@ -349,11 +375,55 @@ func start_fight(boss_id: String, auto := "", resume := false, manual := false) 
 		GameState.begin_fight(boss_id)
 	autosave()
 	fight = FightScene.instantiate()
-	fight.setup(song, GameState.spawn_seed, auto, manual)
+	var clock: SongClock = null
+	var cfg: Dictionary = TuningScript.fight_config()
+	if not manual and AudioSongClock.should_use(song, cfg["audio"], OS.get_cmdline_user_args(), DisplayServer.get_name(), OS.get_cmdline_args()):
+		clock = AudioSongClock.create(song, cfg["audio_offset"])
+	fight.check_mode = check
+	fight.song_path = path
+	fight.labels_error = SongLabels.load_and_apply(song)
+	fight.setup(song, GameState.spawn_seed, auto, manual, clock)
 	fight.result_ready.connect(func(_result): autosave())
 	add_child(fight)
 	apply_labels()
 	return fight
+
+
+## --mark-song <boss>: the blank-timing tap tool (SongTapTool) on that boss's song. It needs
+## the audio backend (the lag is measured against real playback): without it this prints why
+## and returns null. `silent` (the capture) gives it the silent clock for the picture only.
+func start_tap_tool(boss_id: String, user_args := PackedStringArray(), silent := false) -> Node:
+	var path := SongData.find_for_boss(boss_id)
+	var song := SongData.load_file(path) if path != "" else {}
+	if song.is_empty():
+		printerr("--mark-song: no song for boss '%s'" % boss_id)
+		return null
+	var cfg: Dictionary = TuningScript.fight_config()
+	var click: SongClock = SilentSongClock.new()
+	var track: SongClock = SilentSongClock.new()
+	if not silent:
+		var reason := tap_tool_blocker(song, cfg["audio"], user_args, DisplayServer.get_name(), OS.get_cmdline_args())
+		if reason != "":
+			printerr("--mark-song: %s" % reason)
+			return null
+		track = AudioSongClock.create(song, cfg["audio_offset"])
+		if track == null:
+			printerr("--mark-song: the song's track %s will not load" % song.get("audio", ""))
+			return null
+		click = AudioSongClock.new(SongTap.click_stream(), cfg["audio_offset"])
+	tap_tool = SongTapTool.new()
+	tap_tool.setup(song, path, click, track, silent)
+	add_child(tap_tool)
+	return tap_tool
+
+
+## Why --mark-song cannot run here ("" when it can): it measures against real audio playback.
+static func tap_tool_blocker(song: Dictionary, tuning_audio: bool, user_args: PackedStringArray, display_driver: String, engine_args: PackedStringArray = PackedStringArray()) -> String:
+	if "--no-audio" in user_args:
+		return "--no-audio is set; the tap tool measures against real audio playback"
+	if not AudioSongClock.should_use(song, tuning_audio, user_args, display_driver, engine_args):
+		return "the audio backend is not available here (needs a song with a track, fight_audio true in tuning.json, a real display and no script run)"
+	return ""
 
 
 func _process(_delta: float) -> void:
@@ -966,19 +1036,66 @@ func _run_capture_fight() -> void:
 	f._unhandled_input(enter)
 	advance.call(f, 0.3)
 	ok = await shot.call("fight_taunts") and ok
+	# 4c-a: the audition overlay during a freeze (the silent backend; nothing is saved).
+	f = _capture_fight(0, [], true)
+	f.play_to_freeze()
+	advance.call(f, 1.0)
+	ok = await shot.call("fight_check") and ok
+	# 4c-b: the tap tool, mid-measurement (silent clocks, a sandbox copy of the labels; nothing is saved).
+	var tool := _capture_tap_tool()
+	ok = await shot.call("fight_tap") and ok
+	tool.queue_free()
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if ok else 1)
 
 
+## The tap tool for the capture: calibrated, blank 1 with its first pass taken. Works on a
+## copy of the labels and the song JSON under user://sandbox (with an outro label added when
+## the real file has none), so the real files are never read for writing.
+func _capture_tap_tool() -> SongTapTool:
+	var dir := "user://sandbox/tap_capture"
+	DirAccess.make_dir_recursive_absolute(dir)
+	var path := SongData.find_for_boss(CAPTURE_FIGHT_BOSS)
+	var song := SongData.load_file(path)
+	var labels_copy := dir.path_join("labels.txt")
+	var json_copy := dir.path_join("song.json")
+	var f := FileAccess.open(labels_copy, FileAccess.WRITE)
+	f.store_string(SongTap.with_outro(FileAccess.get_file_as_string(str(song["labels"]))))
+	f.close()
+	f = FileAccess.open(json_copy, FileAccess.WRITE)
+	f.store_string(FileAccess.get_file_as_string(path))
+	f.close()
+	song["labels"] = labels_copy
+	var t := SongTapTool.new()
+	t.setup(song, json_copy, SilentSongClock.new(), SilentSongClock.new(), true)
+	add_child(t)
+	t.handle_key(KEY_ENTER, true)
+	for c in SongTap.click_times():
+		t.advance_until(t.click_clock, c + 0.12)
+		t.handle_key(KEY_SPACE, true)
+		t.handle_key(KEY_SPACE, false)
+	t.advance_until(t.click_clock, SongTap.click_track_end() + 0.1)
+	t.handle_key(KEY_ENTER, true)
+	var b: Dictionary = SongData.flat_blanks(song)[0]
+	var ws: float = b["word_start"]
+	t.advance_until(t.song_clock, ws + 0.12 + t.lag)
+	t.handle_key(KEY_SPACE, true)
+	t.advance_until(t.song_clock, ws + 0.95 + t.lag)
+	t.handle_key(KEY_SPACE, false)
+	t.step(SongTapTool.GAP_TIME + 0.1)
+	t.advance_until(t.song_clock, ws - 1.0)
+	return t
+
+
 ## A fresh fight at full hearts for the capture, stepped by the capture (never saved).
-func _capture_fight(nunchi := 0, known: Array = []) -> Node3D:
+func _capture_fight(nunchi := 0, known: Array = [], check := false) -> Node3D:
 	GameState.new_game()
 	for card in known:
 		GameState.lose_secret(card, CAPTURE_FIGHT_BOSS)
 	if nunchi > 0:
 		GameState.add_nunchi(nunchi)
 	hud.refresh()
-	return start_fight(CAPTURE_FIGHT_BOSS, "", false, true)
+	return start_fight(CAPTURE_FIGHT_BOSS, "", false, true, check)
 
 
 func _run_capture_hud() -> void:

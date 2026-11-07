@@ -16,6 +16,7 @@ var _counters: Dictionary = {}
 var _fallback_attack: Dictionary = FALLBACK_ATTACK
 var _fallback_counter: Dictionary = FALLBACK_COUNTER
 var _flourish: Dictionary = FALLBACK_FLOURISH
+var _sfx: Dictionary = {}
 
 
 func _init(path: String = PATH) -> void:
@@ -29,6 +30,7 @@ func _init(path: String = PATH) -> void:
 	_fallback_attack = fb.get("attack", FALLBACK_ATTACK)
 	_fallback_counter = fb.get("counter", FALLBACK_COUNTER)
 	_flourish = data.get("loaded_flourish", FALLBACK_FLOURISH)
+	_sfx = data.get("sfx", {})
 
 
 ## {"id", "color": Color, "size": Vector3, "placeholder": bool}
@@ -45,6 +47,26 @@ func counter(id: String) -> Dictionary:
 	var known := _counters.has(id)
 	var entry: Dictionary = _counters[id] if known else _fallback_counter
 	return {"id": id, "tone": str(entry.get("tone", "slapstick")), "placeholder": not known}
+
+
+## The sound effect file for `id` (e.g. "wrong_scream"), or "" when the registry names none.
+## With a list this is the first path; see sfx_list.
+func sfx(id: String) -> String:
+	var list := sfx_list(id)
+	return list[0] if not list.is_empty() else ""
+
+
+## Every sound effect path for `id`: the registry entry may be a list of paths or (old data) a single string.
+func sfx_list(id: String) -> Array[String]:
+	var out: Array[String] = []
+	var v = _sfx.get(id, null)
+	if v is Array:
+		for p in v:
+			if str(p) != "":
+				out.append(str(p))
+	elif v != null and str(v) != "":
+		out.append(str(v))
+	return out
 
 
 ## The nastier landing of a loaded blank's attack: {"shake": float (screen shake, 0 = none),

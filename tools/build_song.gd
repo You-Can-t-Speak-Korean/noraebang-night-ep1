@@ -5,7 +5,8 @@
 # Systems Spec §6.5: the attack id plus _slapstick or _gory (the sheet's 🤡 / 🩸).
 # The phase lighting and blank 8's blackout are hand-written the same way (the sheet
 # describes them only in prose: "lights flicker", "the lights go out", "frantic").
-# Placeholder line times come from tuning.json (song_first_line_time, song_line_gap).
+# Line and blank times come from the Audacity label file (SongLabels.apply); without one, the
+# placeholder times from tuning.json (song_first_line_time, song_line_gap) stay.
 # Stops with a message, writing nothing, if the sheet is inconsistent with itself.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -15,6 +16,9 @@ const TuningScript := preload("res://scripts/tuning.gd")
 const SHEET := "res://docs/songs/songsheet-01-eunju-dalnim-v0.2.md"
 const OUT := "res://data/songs/eunju_dalnim.json"
 const CARDS := "res://data/secrets/act1_cards.json"
+const AUDIO := "res://audio/songs/dalnim_boram.mp3"
+## Audacity labels for AUDIO (timing of every line and blank); without it the placeholder times stay.
+const LABELS := "res://data/songs/eunju_dalnim_boram.labels.txt"
 const SONG_ID := "eunju_dalnim"
 const BOSS := "eunju"
 const COUNTDOWN := 5.0
@@ -149,6 +153,20 @@ func build() -> Array[String]:
 		},
 		"game_over": {"anchor": "문태식", "line": sheet["anchor"]},
 	}
+	song["audio"] = AUDIO
+	song["labels"] = LABELS
+	for l in lines:
+		if l["kind"] == "intro" or l["kind"] == "outro":
+			l["show"] = false  # spoken in the audio; the 반주기 panel does not draw them
+	if FileAccess.file_exists(LABELS):
+		var label_text := FileAccess.get_file_as_string(LABELS)
+		errors.append_array(SongLabels.parse_errors(label_text))
+		if errors.is_empty():
+			errors.append_array(SongLabels.apply(song, SongLabels.parse(label_text)))
+		if not errors.is_empty():
+			return errors
+	else:
+		print("build_song: WARNING: %s not found, keeping the placeholder line times" % LABELS)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT.get_base_dir()))
 	var f := FileAccess.open(OUT, FileAccess.WRITE)
 	if f == null:

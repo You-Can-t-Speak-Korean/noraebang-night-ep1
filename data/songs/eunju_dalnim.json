@@ -3,7 +3,7 @@
 	"title": "달님은 계란 후라이",
 	"boss": "eunju",
 	"countdown": 5.0,
-	"length": 62.0,
+	"length": 116.0,
 	"lighting": {
 		"1": "normal",
 		"2": "normal",
@@ -12,12 +12,12 @@
 	},
 	"phases": [
 		{
-			"phase": 1,
+			"phase": 1.0,
 			"section": "Verse",
 			"blanks": [
 				{
-					"n": 1,
-					"time": 5.0,
+					"n": 1.0,
+					"time": 19.105,
 					"line": "하얀 흰자 가운데 ___ 노른자",
 					"options": [
 						"노란",
@@ -27,11 +27,15 @@
 					"answer": "노란",
 					"teaches": "Colour adjectives",
 					"attack": "booger_flick",
-					"counter": "booger_flick_slapstick"
+					"counter": "booger_flick_slapstick",
+					"word_start": 19.155,
+					"word_end": 20.067,
+					"word_end_marked": true,
+					"pause_at": 19.105
 				},
 				{
-					"n": 2,
-					"time": 14.0,
+					"n": 2.0,
+					"time": 41.136,
 					"line": "하늘은 커다란 ___",
 					"options": [
 						"프라이팬",
@@ -41,11 +45,15 @@
 					"answer": "프라이팬",
 					"teaches": "Kitchen nouns",
 					"attack": "soda_bottle_rocket",
-					"counter": "soda_bottle_rocket_slapstick"
+					"counter": "soda_bottle_rocket_slapstick",
+					"word_start": 41.186,
+					"word_end": 42.658,
+					"word_end_marked": true,
+					"pause_at": 41.136
 				},
 				{
-					"n": 3,
-					"time": 17.0,
+					"n": 3.0,
+					"time": 44.055,
 					"line": "기름이 ___, 별들이 톡톡 튀어요",
 					"options": [
 						"지글지글",
@@ -55,17 +63,21 @@
 					"answer": "지글지글",
 					"teaches": "의성어",
 					"attack": "candle_hairspray_flame",
-					"counter": "candle_hairspray_flame_slapstick"
+					"counter": "candle_hairspray_flame_slapstick",
+					"word_start": 44.105,
+					"word_end": 45.472,
+					"word_end_marked": true,
+					"pause_at": 44.055
 				}
 			]
 		},
 		{
-			"phase": 2,
+			"phase": 2.0,
 			"section": "Chorus",
 			"blanks": [
 				{
-					"n": 4,
-					"time": 23.0,
+					"n": 4.0,
+					"time": 56.764,
 					"line": "별은 하얀 ___이에요, 솔솔 뿌려요",
 					"options": [
 						"소금",
@@ -75,11 +87,15 @@
 					"answer": "소금",
 					"teaches": "Colour clue → noun",
 					"attack": "thumbtack_party_popper",
-					"counter": "thumbtack_party_popper_slapstick"
+					"counter": "thumbtack_party_popper_slapstick",
+					"word_start": 56.814,
+					"word_end": 58.139,
+					"word_end_marked": true,
+					"pause_at": 56.764
 				},
 				{
-					"n": 5,
-					"time": 29.0,
+					"n": 5.0,
+					"time": 67.571,
 					"line": "밤마다 ___ 달을 먹어요?",
 					"options": [
 						"누가",
@@ -89,11 +105,15 @@
 					"answer": "누가",
 					"teaches": "누가 (subject)",
 					"attack": "cake_knife_throw",
-					"counter": "cake_knife_throw_slapstick"
+					"counter": "cake_knife_throw_slapstick",
+					"word_start": 67.621,
+					"word_end": 68.673,
+					"word_end_marked": true,
+					"pause_at": 67.571
 				},
 				{
-					"n": 6,
-					"time": 32.0,
+					"n": 6.0,
+					"time": 74.931,
 					"line": "아침이 되면 하늘에 달이 ___",
 					"options": [
 						"없어요",
@@ -103,17 +123,21 @@
 					"answer": "없어요",
 					"teaches": "있다 / 없다",
 					"attack": "party_hat_cone_stab",
-					"counter": "party_hat_cone_stab_slapstick"
+					"counter": "party_hat_cone_stab_slapstick",
+					"word_start": 74.981,
+					"word_end": 76.178,
+					"word_end_marked": true,
+					"pause_at": 74.931
 				}
 			]
 		},
 		{
-			"phase": 3,
+			"phase": 3.0,
 			"section": "Bridge",
 			"blanks": [
 				{
-					"n": 7,
-					"time": 35.0,
+					"n": 7.0,
+					"time": 81.664,
 					"line": "어젯밤에 나는 ___",
 					"options": [
 						"봤어요",
@@ -123,11 +147,15 @@
 					"answer": "봤어요",
 					"teaches": "Past tense -았/었-",
 					"attack": "paper_doll_blade_storm",
-					"counter": "paper_doll_blade_storm_gory"
+					"counter": "paper_doll_blade_storm_gory",
+					"word_start": 81.714,
+					"word_end": 82.794,
+					"word_end_marked": true,
+					"pause_at": 81.664
 				},
 				{
-					"n": 8,
-					"time": 44.0,
+					"n": 8.0,
+					"time": 92.432,
 					"line": "이제 하늘이 ___",
 					"options": [
 						"깜깜해요",
@@ -138,17 +166,21 @@
 					"teaches": "Adjectives",
 					"attack": "mic_cord_electrocution",
 					"counter": "mic_cord_electrocution_gory",
-					"light": "blackout"
+					"light": "blackout",
+					"word_start": 92.482,
+					"word_end": 93.998,
+					"word_end_marked": true,
+					"pause_at": 92.432
 				}
 			]
 		},
 		{
-			"phase": 4,
+			"phase": 4.0,
 			"section": "Final chorus",
 			"blanks": [
 				{
-					"n": 9,
-					"time": 50.0,
+					"n": 9.0,
+					"time": 103.752,
 					"line": "배가 고파요, 나는 달을 ___",
 					"options": [
 						"먹고 싶어요",
@@ -158,11 +190,15 @@
 					"answer": "먹고 싶어요",
 					"teaches": "-고 싶다",
 					"attack": "booger_sniper",
-					"counter": "booger_sniper_gory"
+					"counter": "booger_sniper_gory",
+					"word_start": 103.802,
+					"word_end": 105.141,
+					"word_end_marked": true,
+					"pause_at": 103.752
 				},
 				{
-					"n": 10,
-					"time": 56.0,
+					"n": 10.0,
+					"time": 110.271,
 					"line": "달이 다시 ___ 한 입에 꿀꺽!",
 					"options": [
 						"뜨면",
@@ -172,7 +208,11 @@
 					"answer": "뜨면",
 					"teaches": "Condition -(으)면",
 					"attack": "color_tv_drop",
-					"counter": "color_tv_drop_gory"
+					"counter": "color_tv_drop_gory",
+					"word_start": 110.321,
+					"word_end": 111.585,
+					"word_end_marked": true,
+					"pause_at": 110.271
 				}
 			]
 		}
@@ -180,159 +220,182 @@
 	"lines": [
 		{
 			"kind": "intro",
-			"phase": 1,
-			"time": 0.0,
-			"text": "자, 다 조용히 해! 내 노래야!",
-			"speaker": "은주"
-		},
-		{
-			"kind": "lyric",
-			"phase": 1,
+			"phase": 1.0,
 			"time": 2.0,
-			"text": "밤하늘을 보세요, 동그란 게 떴어요"
+			"text": "자, 다 조용히 해! 내 노래야!",
+			"speaker": "은주",
+			"show": false,
+			"end": 5.0
 		},
 		{
 			"kind": "lyric",
-			"phase": 1,
-			"time": 5.0,
-			"text": "하얀 흰자 가운데 ___ 노른자",
-			"blank": 1
-		},
-		{
-			"kind": "lyric",
-			"phase": 1,
+			"phase": 1.0,
 			"time": 8.0,
-			"text": "엄마는 달님이래요, 선생님도 달님이래요"
+			"text": "밤하늘을 보세요, 동그란 게 떴어요",
+			"end": 14.0
 		},
 		{
 			"kind": "lyric",
-			"phase": 1,
-			"time": 11.0,
-			"text": "아니에요, 아니에요, 그건 계란 후라이예요"
+			"phase": 1.0,
+			"time": 15.0,
+			"text": "하얀 흰자 가운데 ___ 노른자",
+			"blank": 1.0,
+			"end": 22.729
 		},
 		{
 			"kind": "lyric",
-			"phase": 1,
-			"time": 14.0,
+			"phase": 1.0,
+			"time": 22.9,
+			"text": "엄마는 달님이래요, 선생님도 달님이래요",
+			"end": 28.922
+		},
+		{
+			"kind": "lyric",
+			"phase": 1.0,
+			"time": 30.779,
+			"text": "아니에요, 아니에요, 그건 계란 후라이예요",
+			"end": 37.729
+		},
+		{
+			"kind": "lyric",
+			"phase": 1.0,
+			"time": 39.172,
 			"text": "하늘은 커다란 ___",
-			"blank": 2
+			"blank": 2.0,
+			"end": 42.658
 		},
 		{
 			"kind": "lyric",
-			"phase": 1,
-			"time": 17.0,
+			"phase": 1.0,
+			"time": 42.893,
 			"text": "기름이 ___, 별들이 톡톡 튀어요",
-			"blank": 3
+			"blank": 3.0,
+			"end": 51.444
 		},
 		{
 			"kind": "lyric",
-			"phase": 2,
-			"time": 20.0,
-			"text": "달님은 계란 후라이, 계란 후라이"
+			"phase": 2.0,
+			"time": 51.758,
+			"text": "달님은 계란 후라이, 계란 후라이",
+			"end": 55.644
 		},
 		{
 			"kind": "lyric",
-			"phase": 2,
-			"time": 23.0,
+			"phase": 2.0,
+			"time": 55.779,
 			"text": "별은 하얀 ___이에요, 솔솔 뿌려요",
-			"blank": 4
+			"blank": 4.0,
+			"end": 62.436
 		},
 		{
 			"kind": "lyric",
-			"phase": 2,
-			"time": 26.0,
-			"text": "달님은 계란 후라이, 계란 후라이"
+			"phase": 2.0,
+			"time": 63.101,
+			"text": "달님은 계란 후라이, 계란 후라이",
+			"end": 66.401
 		},
 		{
 			"kind": "lyric",
-			"phase": 2,
-			"time": 29.0,
+			"phase": 2.0,
+			"time": 66.779,
 			"text": "밤마다 ___ 달을 먹어요?",
-			"blank": 5
+			"blank": 5.0,
+			"end": 70.629
 		},
 		{
 			"kind": "lyric",
-			"phase": 2,
-			"time": 32.0,
+			"phase": 2.0,
+			"time": 70.886,
 			"text": "아침이 되면 하늘에 달이 ___",
-			"blank": 6
+			"blank": 6.0,
+			"end": 76.178
 		},
 		{
 			"kind": "lyric",
-			"phase": 3,
-			"time": 35.0,
+			"phase": 3.0,
+			"time": 79.551,
 			"text": "어젯밤에 나는 ___",
-			"blank": 7
+			"blank": 7.0,
+			"end": 82.794
 		},
 		{
 			"kind": "lyric",
-			"phase": 3,
-			"time": 38.0,
-			"text": "하늘에서 노른자가 톡 터졌어요"
+			"phase": 3.0,
+			"time": 83.115,
+			"text": "하늘에서 노른자가 톡 터졌어요",
+			"end": 86.765
 		},
 		{
 			"kind": "lyric",
-			"phase": 3,
-			"time": 41.0,
-			"text": "노란 비가 주룩주룩, 지붕 위에 뚝뚝"
+			"phase": 3.0,
+			"time": 86.765,
+			"text": "노란 비가 주룩주룩, 지붕 위에 뚝뚝",
+			"end": 90.636
 		},
 		{
 			"kind": "lyric",
-			"phase": 3,
-			"time": 44.0,
+			"phase": 3.0,
+			"time": 90.751,
 			"text": "이제 하늘이 ___",
-			"blank": 8
+			"blank": 8.0,
+			"end": 93.998
 		},
 		{
 			"kind": "lyric",
-			"phase": 4,
-			"time": 47.0,
-			"text": "달님은 계란 후라이, 계란 후라이"
+			"phase": 4.0,
+			"time": 97.265,
+			"text": "달님은 계란 후라이, 계란 후라이",
+			"end": 101.336
 		},
 		{
 			"kind": "lyric",
-			"phase": 4,
-			"time": 50.0,
+			"phase": 4.0,
+			"time": 101.336,
 			"text": "배가 고파요, 나는 달을 ___",
-			"blank": 9
+			"blank": 9.0,
+			"end": 105.141
 		},
 		{
 			"kind": "lyric",
-			"phase": 4,
-			"time": 53.0,
-			"text": "달님은 계란 후라이, 계란 후라이"
+			"phase": 4.0,
+			"time": 105.436,
+			"text": "달님은 계란 후라이, 계란 후라이",
+			"end": 109.079
 		},
 		{
 			"kind": "lyric",
-			"phase": 4,
-			"time": 56.0,
+			"phase": 4.0,
+			"time": 109.243,
 			"text": "달이 다시 ___ 한 입에 꿀꺽!",
-			"blank": 10
+			"blank": 10.0,
+			"end": 113.222
 		},
 		{
 			"kind": "outro",
-			"phase": 4,
-			"time": 59.0,
+			"phase": 4.0,
+			"time": 114.0,
 			"text": "잘 먹겠습니다.",
-			"speaker": "보람"
+			"speaker": "보람",
+			"show": false,
+			"end": 116.0
 		}
 	],
 	"loaded": [
 		{
 			"card": "dad_country",
-			"blank": 4,
+			"blank": 4.0,
 			"extra_option": "설탕",
 			"taunt": "너네 나라에도 계란 있어?"
 		},
 		{
 			"card": "mom_salary",
-			"blank": 6,
+			"blank": 6.0,
 			"extra_option": "적어요",
 			"taunt": "너네 엄마 월급으로 케이크 살 수 있어?"
 		},
 		{
 			"card": "dad_drinking",
-			"blank": 9,
+			"blank": 9.0,
 			"extra_option": "마시고 싶어요",
 			"taunt": "너네 아빠는 달 말고 소주 먹지?"
 		}
@@ -350,5 +413,7 @@
 	"game_over": {
 		"anchor": "문태식",
 		"line": "오늘 저녁, 국민학교 1학년 장보람 양이 생일 파티에서 사망했습니다. 다음 소식입니다."
-	}
+	},
+	"audio": "res://audio/songs/dalnim_boram.mp3",
+	"labels": "res://data/songs/eunju_dalnim_boram.labels.txt"
 }

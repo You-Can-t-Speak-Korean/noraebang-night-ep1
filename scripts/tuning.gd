@@ -35,11 +35,17 @@ const DEFAULT_WRONG_HALVES := 2
 
 ## Fight tunables: {"first_line_time": float (s), "line_gap": float (s, placeholder
 ## spacing between lyric lines), "wrong_halves": int (hearts a wrong answer costs),
-## "lighting_effects": bool (the bridge flicker, blank 8's blackout and the red frantic phase)}.
-## tools/build_song.gd bakes the two song values into the song JSON's line times.
+## "lighting_effects": bool (the bridge flicker, blank 8's blackout and the red frantic phase),
+## "audio": bool (play the song's track; off = the silent clock), "audio_offset": float (s, added
+## to the audio clock: positive = the clock reads later, so events fire earlier in the audio),
+## "pause_lead": float (s a freeze lands before the blank word's onset), "word_default_len":
+## float (s a blank word lasts when its label has no end marked)}.
+## tools/build_song.gd bakes the two song values into the placeholder line times (used only
+## when the song has no label file); SongLabels reads the last two.
 static func fight_config() -> Dictionary:
 	var config := {"first_line_time": DEFAULT_SONG_FIRST_LINE, "line_gap": DEFAULT_SONG_LINE_GAP,
-			"wrong_halves": DEFAULT_WRONG_HALVES, "lighting_effects": false}
+			"wrong_halves": DEFAULT_WRONG_HALVES, "lighting_effects": false, "audio": true,
+			"audio_offset": 0.0, "pause_lead": 0.05, "word_default_len": 0.7}
 	var data = JSON.parse_string(FileAccess.get_file_as_string(PATH)) if FileAccess.file_exists(PATH) else null
 	if typeof(data) != TYPE_DICTIONARY:
 		push_error("Tuning: could not read %s, using fight defaults" % PATH)
@@ -59,4 +65,14 @@ static func fight_config() -> Dictionary:
 		config["lighting_effects"] = data["fight_lighting_effects"]
 	else:
 		push_error("Tuning: fight_lighting_effects missing or invalid, using false")
+	if typeof(data.get("fight_audio")) == TYPE_BOOL:
+		config["audio"] = data["fight_audio"]
+	else:
+		push_error("Tuning: fight_audio missing or invalid, using true")
+	for pair in [["audio_offset", "audio_offset", -5.0], ["blank_pause_lead", "pause_lead", 0.0], ["blank_word_default_len", "word_default_len", 0.05]]:
+		var v = data.get(pair[0])
+		if (typeof(v) == TYPE_FLOAT or typeof(v) == TYPE_INT) and float(v) >= pair[2] and float(v) <= 5.0:
+			config[pair[1]] = float(v)
+		else:
+			push_error("Tuning: %s missing or invalid, using %s" % [pair[0], config[pair[1]]])
 	return config

@@ -142,7 +142,8 @@ func answer(picked: String) -> Dictionary:
 		correct += 1
 	else:
 		wrong += 1
-		_state.damage(wrong_halves)
+		if wrong_halves > 0:  # 0 in the audition mode: wrong answers cost nothing
+			_state.damage(wrong_halves)
 	results.append({"n": blank["n"], "picked": picked, "right": right, "timeout": timeout})
 	return {"n": blank["n"], "right": right, "timeout": timeout, "picked": picked, "answer": blank["answer"],
 			"attack": blank["attack"], "counter": blank["counter"], "lost": lost(),
@@ -176,3 +177,24 @@ func finish() -> Dictionary:
 	var result := {"score": score(), "outcome": outcome()}
 	_state.end_fight(boss, result["outcome"], result["score"])
 	return result
+
+
+## Copies the timing keys from the song's blanks into this fight's copies (after the
+## audition mode changed them).
+func sync_timing() -> void:
+	var fresh := SongData.flat_blanks(song)
+	for b in blanks:
+		for f in fresh:
+			if int(f["n"]) == int(b["n"]):
+				for key in ["time", "pause_at", "word_start", "word_end", "word_end_marked"]:
+					if f.has(key):
+						b[key] = f[key]
+
+
+## Back to blank `i` (0-based), forgetting the answers from it on (the audition's jumps).
+func rewind_to(i: int) -> void:
+	index = clampi(i, 0, blanks.size())
+	results.resize(mini(results.size(), index))
+	correct = results.filter(func(r): return r["right"]).size()
+	wrong = results.size() - correct
+	crossed = ""

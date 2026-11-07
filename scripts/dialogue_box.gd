@@ -28,6 +28,10 @@ var choosing := false
 var highlighted := 0
 
 var _generation := 0
+## Fetches of the next line still running inside the Dialogue Manager. Its stage directions
+## (calls on the scene director) run during a fetch, so the owner must not free the director
+## while one is in flight (the call would find a freed object).
+var fetches_in_flight := 0
 var _aliases: Dictionary = {}
 var _responses: Array = []
 var _rows: Array[PanelContainer] = []
@@ -69,7 +73,7 @@ func play(resource: DialogueResource, cue: String, states: Array = []) -> void:
 		return
 	_open()
 	var mine := _generation
-	var line: DialogueLine = await DialogueManager.get_next_dialogue_line(resource, cue, states)
+	var line: DialogueLine = await _fetch(resource, cue, states)
 	while line != null and mine == _generation:
 		_show(line)
 		var next := ""
@@ -90,9 +94,16 @@ func play(resource: DialogueResource, cue: String, states: Array = []) -> void:
 		# Stage directions run between lines; the panel stays out of their way.
 		_panel.visible = false
 		_clear_choices()
-		line = await DialogueManager.get_next_dialogue_line(resource, next, states)
+		line = await _fetch(resource, next, states)
 	if mine == _generation:
 		_close()
+
+
+func _fetch(resource: DialogueResource, key: String, states: Array) -> DialogueLine:
+	fetches_in_flight += 1
+	var line: DialogueLine = await DialogueManager.get_next_dialogue_line(resource, key, states)
+	fetches_in_flight -= 1
+	return line
 
 
 ## Stops the conversation now (death, scene restart). Safe when nothing is open.

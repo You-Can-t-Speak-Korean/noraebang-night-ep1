@@ -7,5 +7,9 @@
   "song_first_line_time": 2.0,
   "song_line_gap": 3.0,
   "fight_wrong_halves": 2,
-  "fight_lighting_effects": false
+  "fight_lighting_effects": false,
+  "fight_audio": true,
+  "audio_offset": 0.0,
+  "blank_pause_lead": 0.05,
+  "blank_word_default_len": 0.7
 }

@@ -9,6 +9,8 @@
 # The world test with a save from a newer version adds one more push_error
 # ("World: could not load the save ...").
 # Bad --seed / --hearts / --skip-to / --fight / --fight-auto values push_warnings by design.
+# The load-time labels tests push_error ("SongLabels: labels bad_labels.txt do not apply ..."), the tap
+# tool tests push_warning (its on-screen problems), and a --mark-song without a boss warns, by design.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends SceneTree
@@ -71,6 +73,7 @@ func _initialize() -> void:
 	_test_empty_classroom()
 	_test_3c_files()
 	_test_import_and_dialogue()
+	var song_files_before := _real_song_md5s()
 	var project_path := ProjectSettings.globalize_path("res://project.godot")
 	var project_before := FileAccess.get_file_as_bytes(project_path)
 	_test_song_json()
@@ -79,6 +82,9 @@ func _initialize() -> void:
 	await _test_fight_scene()
 	await _test_fight_world()
 	await _test_build_4b()
+	await _test_build_4ca()
+	await _test_build_4cb()
+	check(_real_song_md5s() == song_files_before, "the tests leave the real song JSON and labels file byte-identical")
 	check(FileAccess.get_file_as_bytes(project_path) == project_before, "the fight tests leave project.godot byte-identical")
 	check(FileAccess.file_exists(real_save) == real_existed and (not real_existed or FileAccess.get_file_as_bytes(real_save) == real_before), "the real save was never touched by the run")
 	_clean_world_saves()
@@ -545,6 +551,17 @@ func _frames(n: int) -> void:
 	await process_frame
 
 
+## Waits (in frames) until `cond` is true, at most `max_frames`; true if it became so. Tests wait
+## for the state they check, never for a fixed number of frames: how many frames a state takes
+## depends on how busy the machine is.
+func _until(cond: Callable, max_frames := 300) -> bool:
+	var n := 0
+	while not cond.call() and n < max_frames:
+		await _frames(1)
+		n += 1
+	return cond.call()
+
+
 func _press(action: String) -> void:
 	var e := InputEventAction.new()
 	e.action = action
@@ -747,7 +764,7 @@ func _test_map_walk() -> void:
 	await _press("confirm")
 	check(not world._text_open and not world.player.movement_locked, "text closes, movement unlocked")
 	world.player.place(-4.5, 0)
-	await _frames(3)
+	await _until(func(): return world.player.current_interactable == null and not world.key_prompt.visible)
 	check(world.player.current_interactable == null and not world.key_prompt.visible, "no keycap away from anything")
 	await _confirm_at(world, world.room.get_node("To_hallway_1f"))
 	check(world.room_id == "hallway_1f", "back to 1층 복도")
@@ -801,6 +818,14 @@ func _start_world(keep_save := false, with_scene := false) -> Node:
 
 
 func _stop_world(world: Node) -> void:
+	# A line fetch in flight runs stage directions on the director; let it finish before
+	# the director is freed (else "Method first_line_pause not found" on a freed object).
+	if world.director != null:
+		world.director.cancel()
+	var waited := 0
+	while world.dialogue_box != null and world.dialogue_box.fetches_in_flight > 0 and waited < 600:
+		await _frames(1)
+		waited += 1
 	world.queue_free()
 	await _frames(2)
 
@@ -826,7 +851,12 @@ func _search_spot(world: Node, config: Dictionary, spot_id: String) -> bool:
 		world._load_room(room_id, "")
 	var node := _spot_node(world.room, spot_id)
 	world.player.place(node.position.x, 0)
-	await _frames(3)
+	# Wait for the overlap (it registers on a physics tick), not a frame count.
+	var waited := 0
+	while world.player.current_interactable != node and waited < 60:
+		await _frames(1)
+		waited += 1
+	await _frames(2)
 	var reachable: bool = world.player.current_interactable == node
 	await _press("confirm")
 	return reachable
@@ -2407,7 +2437,10 @@ func _test_scene2_death() -> void:
 	for step in ["scene_02", "mon_walk", "mon_roam"]:
 		_write_progress_save(step, "mon")
 		var world: Node = await _start_world(true, true)
-		await _frames(4)
+		# Die once the step is running (its phase set, and for scene_02 its first box open).
+		var running_phase: String = {"scene_02": "s2", "mon_walk": "walk", "mon_roam": "mon_roam"}[step]
+		check(await _until(func(): return world.director.phase == running_phase and (step != "scene_02" or world.dialogue_box.is_open)), "%s: the step is running" % step)
+		var box_open: bool = world.dialogue_box.is_open
 		gs.add_nunchi(2)
 		gs.lose_secret("pride", "eunju")
 		gs.ddeok = 3
@@ -2415,8 +2448,15 @@ func _test_scene2_death() -> void:
 		gs.damage(1)
 		await _frames(2)
 		check(world._game_over, "%s: dying shows GAME OVER" % step)
-		await _press("confirm")
-		await _frames(4)
+		if box_open:
+			# World ignores Enter while a dialogue box is open (nothing in the game deals damage during
+			# dialogue, so a game over under an open box cannot happen). Close the box and confirm in the
+			# same frame, so the director cannot open the next one in between.
+			world.dialogue_box.cancel()
+			_press_confirm(world)
+		else:
+			await _press("confirm")
+		await _until(func(): return not world._game_over and world.room_id == "classroom_1_3" and world.director.phase == "a")
 		check(world.room_id == "classroom_1_3" and is_equal_approx(world.player.position.x, 7.0), "%s: death restarts in 1학년 3반 at its door" % step)
 		check(world.director.phase == "a" and gs.progress == "scene_01" and world.player.movement_locked, "%s: restarts at 01-A" % step)
 		check(gs.nunchi == 0 and gs.ddeok == 0 and gs.secrets_held.size() == gs.hand.size() and gs.map_day == "sat" and gs.hearts_halves == gs.hearts_max_halves, "%s: fresh state, Saturday" % step)
@@ -2473,7 +2513,11 @@ func _test_optional_conversations() -> void:
 	check(sang.size() == 1, "OC-02: 상훈 stands in the 현관")
 	check(sang[0] != rack and abs(sang[0].position.x - rack.position.x) < 3.0, "상훈 is beside the 신발장 (a separate actor)")
 	world.player.place(rack.position.x, 0)
-	await _frames(3)
+	var rack_waited := 0
+	while world.player.current_interactable != rack and rack_waited < 60:
+		await _frames(1)
+		rack_waited += 1
+	await _frames(2)
 	check(world.player.current_interactable == rack, "the 신발장 is still the nearest spot at its own position")
 	world.layout = {}
 	await _press("confirm")
@@ -2665,39 +2709,41 @@ func _test_keycap() -> void:
 	check(keycap.get_node("KeyText").text == "Enter", "the keycap says Enter")
 	var stove: Node3D = world.room.get_node("Stove")
 	player.place(stove.position.x, 0)
-	await _frames(3)
+	# The interactable is set on a physics tick and the keycap moves in World._process: wait for both.
+	await _until(func(): return player.current_interactable == stove and keycap.visible and is_equal_approx(keycap.global_position.x, stove.global_position.x))
 	check(player.current_interactable == stove and keycap.visible, "free at the stove: the keycap shows")
 	check(is_equal_approx(keycap.global_position.x, stove.global_position.x) and keycap.global_position.y > stove.size.y, "the keycap hovers above the stove")
 	# Nearest wins: next to the 교탁 the closer one gets the cap.
 	var lectern: Node3D = world.room.get_node("Lectern")
 	player.place(lectern.position.x + 0.3, 0)
-	await _frames(3)
+	await _until(func(): return player.current_interactable == lectern and is_equal_approx(keycap.global_position.x, lectern.global_position.x))
 	check(player.current_interactable == lectern and is_equal_approx(keycap.global_position.x, lectern.global_position.x), "the keycap follows the nearest interactable")
 	# Locked (text open, scene, transition...): hidden at once.
 	player.movement_locked = true
-	await _frames(2)
+	await _until(func(): return not keycap.visible)
 	check(not keycap.visible, "movement locked: the keycap is hidden")
 	player.movement_locked = false
-	await _frames(2)
+	await _until(func(): return keycap.visible)
 	check(keycap.visible, "movement free again: the keycap is back")
 	await _press("confirm")
+	await _until(func(): return world.text_is_open() and not keycap.visible)
 	check(world.text_is_open() and not keycap.visible, "while the text box is open the keycap is hidden")
 	await _press("confirm")
 	# Doors get one too, above the door.
 	var door: Node3D = world.room.get_node("To_hallway_1f")
 	player.place(door.position.x, 0)
-	await _frames(3)
+	await _until(func(): return player.current_interactable == door and keycap.visible and keycap.global_position.y > door.size.y)
 	check(keycap.visible and keycap.global_position.y > door.size.y, "the keycap hovers above a door")
 	# Away from everything: gone.
 	player.place(-4.5, 0)
-	await _frames(3)
+	await _until(func(): return player.current_interactable == null and not keycap.visible)
 	check(not keycap.visible, "no keycap away from anything")
 	# A new room gets its own keycap.
 	player.place(door.position.x, 0)
-	await _frames(3)
+	await _until(func(): return player.current_interactable == door)
 	await _press("confirm")
 	await _wait_transition(world)
-	await _frames(3)
+	await _until(func(): return world.key_prompt != null and is_instance_valid(world.key_prompt) and world.key_prompt.get_parent() == world.room and world.key_prompt.visible)
 	check(world.key_prompt != null and is_instance_valid(world.key_prompt) and world.key_prompt.get_parent() == world.room and world.key_prompt.visible, "the next room has its keycap, shown at the arrival door")
 	await _stop_world(world)
 
@@ -2994,17 +3040,13 @@ func _test_song_json() -> void:
 		if lines[i]["time"] < lines[i - 1]["time"]:
 			times_ok = false
 	check(times_ok, "line times never go backwards")
-	var cfg: Dictionary = TuningScript.fight_config()
-	var even := is_equal_approx(lines[1]["time"], cfg["first_line_time"])
-	for i in range(2, lines.size()):
-		even = even and is_equal_approx(lines[i]["time"] - lines[i - 1]["time"], cfg["line_gap"])
-	check(even, "placeholder times are evenly spaced by tuning.json (first line %.1fs, gap %.1fs)" % [cfg["first_line_time"], cfg["line_gap"]])
+	# Timing comes from the label file (Build 4c-a; checked in detail in the SongLabels tests).
 	var blank_times_ok := true
 	for b in blanks:
-		for l in lines:
-			if l.get("blank", 0) == b["n"] and not is_equal_approx(l["time"], b["time"]):
-				blank_times_ok = false
-	check(blank_times_ok, "a blank's time is its line's time")
+		if not is_equal_approx(b["time"], b["pause_at"]) or not b["pause_at"] < b["word_start"]:
+			blank_times_ok = false
+	check(blank_times_ok, "a blank's time is its pause_at, just before its word")
+	check(lines[0].get("show", true) == false and lines[-1].get("show", true) == false and lines.slice(1, -1).all(func(l): return l.get("show", true)), "only the spoken intro and outro are hidden from the panel")
 	check(song["length"] > lines[-1]["time"], "the song is longer than its last line")
 
 	# Attack and counter ids.
@@ -3070,6 +3112,85 @@ func _test_song_json() -> void:
 	check(stray.is_empty(), "every Korean string in the song file is from the sheet %s" % str(stray))
 
 
+## The audio backend under the results: the song's `length` is shorter than the stream, and the
+## music must run on past it, stop only when the stream ends, and leave the fight unharmed.
+func _test_audio_tail() -> void:
+	print("Build 4c-d: the track plays to its real end")
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_8_BITS
+	wav.mix_rate = 8000
+	wav.stereo = false
+	var data := PackedByteArray()
+	data.resize(8000)  # a 1.0 s stream
+	wav.data = data
+	var host := Node.new()
+	root.add_child(host)
+	var probe := AudioSongClock.new(wav, 0.0)
+	check(not probe.stops_at_length() and SilentSongClock.new().stops_at_length(), "an audio clock does not stop at the song's length; the silent clock does")
+	probe.mount(host)
+	probe.play()
+	var t0 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t0 < 300:
+		await process_frame
+	var advances := probe.get_position() > 0.05
+	probe.stop()
+	host.queue_free()
+	if not advances:
+		print("  SKIP the audio driver does not advance a generated stream: the tail test is unverified here")
+		return
+	for scenario in ["ends", "retry", "leave"]:
+		_fresh_fight_state()
+		var clock := AudioSongClock.new(wav, 0.0)
+		var fight := _make_fight(3, "", clock)
+		await _frames(1)
+		fight.song["length"] = 0.3
+		while fight.logic.has_blank():
+			fight.logic.answer(str(fight.logic.current()["answer"]))
+		var started := Time.get_ticks_msec()
+		if scenario != "retry":
+			fight._finish_song()
+			check(fight.state == fight.State.RESULT and clock.is_playing(), "tail (%s): the results show with the music still playing" % scenario)
+		if scenario == "ends":
+			# Run past `length` (0.3 s): the music must still be playing; then wait for the stream end.
+			while Time.get_ticks_msec() - started < 500:
+				await process_frame
+				fight.step(0.016)
+			check(clock.get_position() > 0.3 and clock.is_playing() and clock.player.playing, "tail: the music plays on past the song's length")
+			var waited := 0
+			while clock.player.playing and waited < 400:
+				await process_frame
+				fight.step(0.016)
+				waited += 1
+			check(not clock.player.playing and not clock.is_playing(), "tail: the music stops when the stream ends")
+			var held := clock.get_position()
+			for i in 5:
+				await process_frame
+				fight.step(0.016)
+			check(fight.state == fight.State.RESULT and clock.get_position() == held and fight.card_kind == "revenge", "tail: after the end the screen stays and the clock holds")
+			fight._advance_result()
+			fight.step(0.016)
+			check(fight.state == fight.State.END and not clock.is_playing(), "tail: the end card is reached with the music over")
+		elif scenario == "retry":
+			fight._show_game_over()
+			check(not clock.player.playing, "tail: a game over stops the music")
+			fight.retry()
+			check(fight.state == fight.State.PLAYING and clock.player.playing and clock.get_position() < 0.2, "tail: a retry restarts it at 0")
+			clock.stop()
+		else:
+			var player_ref: AudioStreamPlayer = clock.player
+			fight.queue_free()
+			await _frames(2)
+			check(not is_instance_valid(player_ref) or not player_ref.playing, "tail: leaving the scene stops the music")
+			continue
+		fight.queue_free()
+		await _frames(2)
+	gs_reset_after_tail()
+
+
+func gs_reset_after_tail() -> void:
+	_gs().new_game()
+
+
 func _test_song_clock() -> void:
 	print("Song clock")
 	var c: SongClock = SilentSongClock.new()
@@ -3088,7 +3209,7 @@ func _test_song_clock() -> void:
 	c.play()
 	check(c.get_position() == 0.0, "play starts from the top")
 	var source := FileAccess.get_file_as_string("res://scripts/fight.gd")
-	check(source.find("AudioStream") == -1 and source.find("AudioServer") == -1, "no audio in the fight code")
+	check(source.find("AudioServer") == -1 and source.find("get_playback_position") == -1, "the fight code has no clock maths: that lives in the audio clock backend")
 	check(source.count("SilentSongClock") == 1, "the fight code names the silent clock once, as the default")
 
 
@@ -3275,7 +3396,7 @@ func _test_fight_scene() -> void:
 
 	# The freeze at blank 1.
 	check(fight.play_to_freeze(), "a freeze comes")
-	check(fight.state == fight.State.FREEZE and is_equal_approx(fight.clock.get_position(), 5.0), "frozen at blank 1's time (5.0s)")
+	check(fight.state == fight.State.FREEZE and is_equal_approx(fight.clock.get_position(), float(fight.logic.current()["time"])), "frozen at blank 1's pause_at")
 	check(not fight.clock.is_playing(), "the clock is paused at the blank")
 	check(fight.options.size() == 3 and fight.options.has("노란") and fight.get_node("Arena/Attack") != null, "3 options shown, an attack object is out")
 	var label: Label3D = fight.get_node("Arena/Attack/AttackId")
@@ -3284,7 +3405,7 @@ func _test_fight_scene() -> void:
 	var t0: float = fight.freeze_left
 	fight.step(2.0)
 	check(is_equal_approx(fight.freeze_left, t0 - 2.0) and fight.get_node("Arena/Attack").position.x < x0 - 1.0, "the attack creeps toward 보람 and the timer counts down")
-	check(is_equal_approx(fight.clock.get_position(), 5.0), "the song stays frozen while the attack creeps")
+	check(is_equal_approx(fight.clock.get_position(), float(fight.logic.current()["time"])), "the song stays frozen while the attack creeps")
 	check(fight._timer_label.visible and fight._timer_label.text == "%.1f" % fight.freeze_left, "the timer is visible")
 	check(fight._line_labels.any(func(l): return l.text.contains("[ ____ ]")), "the lyric line shows the blank on the 반주기")
 
@@ -3310,7 +3431,7 @@ func _test_fight_scene() -> void:
 
 	# Wrong answer.
 	fight.play_to_freeze()
-	check(fight.logic.current()["n"] == 2 and is_equal_approx(fight.clock.get_position(), 14.0), "blank 2 freezes at 14.0s")
+	check(fight.logic.current()["n"] == 2 and is_equal_approx(fight.clock.get_position(), float(fight.logic.current()["time"])), "blank 2 freezes at its pause_at")
 	var wrong_index: int = fight.options.find("냉장고")
 	fight.pick(wrong_index)
 	check(not fight.last_result["right"] and gs.hearts_halves == 8, "a wrong answer costs 1 heart")
@@ -3336,7 +3457,7 @@ func _test_fight_scene() -> void:
 	fight = _make_fight(3, "", rec)
 	await _frames(1)
 	fight.play_to_freeze()
-	check(fight.clock == rec and rec.calls.has("play") and rec.calls.has("pause") and is_equal_approx(rec.pos, 5.0), "the fight drives a replacement clock through play/pause/seek/tick")
+	check(fight.clock == rec and rec.calls.has("play") and rec.calls.has("pause") and is_equal_approx(rec.pos, float(fight.logic.current()["time"])), "the fight drives a replacement clock through play/pause/seek/tick")
 	fight.pick_right()
 	fight.finish_beat()
 	check(rec.calls.has("resume") and rec.running, "and resumes it after the answer")
@@ -3827,10 +3948,1151 @@ func _test_build_4b() -> void:
 	check([modes[1], modes[2], modes[3], modes[4], modes[5], modes[6], modes[7], modes[9], modes[10]] == ["normal", "normal", "normal", "normal", "normal", "normal", "flicker", "frantic", "frantic"], "phase lighting at each blank: normal, normal, flicker (7), frantic (9, 10)")
 	check(modes[8] == "blackout", "blank 8 reads blackout")
 	var seen_energies := {}
-	for i in 60:
+	# Sample while the song is still being sung: the results, in normal light, come with the
+	# last sung line's end, so stop sampling just before it.
+	for i in 40:
+		if fight.state != fight.State.PLAYING or fight.clock.get_position() + 0.1 >= fight.results_time():
+			break
 		fight.step(0.05)
 		seen_energies[snappedf(fight._sun.light_energy, 0.01)] = true
 	check(fight._sun.light_color.r > 0.9 and fight._sun.light_color.g < 0.4 and seen_energies.size() >= 2 and not seen_energies.keys().any(func(e): return e > 0.5), "frantic is a dim red that flickers")
 	fight.queue_free()
 	await _frames(2)
 	gs.new_game()
+
+
+# ── Build 4c-a: label timing, the audio clock, the audition ──────────────
+
+const FIXTURE_LABELS := "1.00\t2.00\t(intro) 안녕\n3.00\t4.00\t가나\n4.00\t5.00\t[1] 마바\n5.00\t5.00\t(skip) 무시\n5.00\t6.00\t다라\n7.00\t9.00\t사아자.\n10.00\t11.00\t(outro) 끝\n"
+const AUDITION_DIR := "user://sandbox/audition_test"
+
+
+func _fixture_song() -> Dictionary:
+	return {"length": 0.0, "lines": [
+			{"kind": "intro", "phase": 1, "time": 0.0, "text": "안녕!"},
+			{"kind": "lyric", "phase": 1, "time": 0.0, "text": "가나 ___ 다라", "blank": 1},
+			{"kind": "lyric", "phase": 1, "time": 0.0, "text": "사아자"},
+			{"kind": "outro", "phase": 1, "time": 0.0, "text": "끝!"}],
+		"phases": [{"phase": 1, "blanks": [{"n": 1, "time": 0.0, "line": "가나 ___ 다라", "answer": "마바", "options": ["마바", "사"]}]}]}
+
+
+## The fixture with just its two sung lines (no intro or outro), the first reading "가나 ___다라".
+func _fixture_song_sung(first_line: String) -> Dictionary:
+	var song := _fixture_song()
+	song["lines"] = [song["lines"][1], song["lines"][2]]
+	song["lines"][0]["text"] = first_line
+	return song
+
+
+func _test_build_4ca() -> void:
+	print("Build 4c-a: labels")
+	var cfg := {"pause_lead": 0.05, "word_default_len": 0.7}
+
+	# parse / serialize.
+	var labels := SongLabels.parse(FIXTURE_LABELS)
+	check(labels.size() == 7, "parse: 7 labels")
+	check(labels.map(func(l): return l["kind"]) == ["intro", "lyric", "blank", "skip", "lyric", "lyric", "outro"], "parse: intro, lyric, blank, skip, lyric, lyric, outro tags")
+	check(labels[2]["n"] == 1 and labels[2]["body"] == "마바" and labels[0]["body"] == "안녕" and labels[2]["text"] == "[1] 마바", "parse: [n] number and word, tag stripped from the body, text kept")
+	var again := SongLabels.parse(SongLabels.serialize(labels))
+	check(SongLabels.serialize(labels) == FIXTURE_LABELS and again == labels, "serialize: round trip, tab separated, %.2f")
+	check(SongLabels.parse("2.123456\t3.5\t텍스트\n\nbad line\n")[0]["start"] == 2.123456 and SongLabels.parse("bad line\n").is_empty(), "parse: Audacity's long decimals, and lines that are not labels are skipped")
+
+	# apply on the fixture.
+	var song := _fixture_song()
+	var errors := SongLabels.apply(song, labels, cfg)
+	check(errors.is_empty(), "apply: the fixture matches (%s)" % str(errors))
+	var lines: Array = song["lines"]
+	check(lines[0]["time"] == 1.0 and lines[0]["end"] == 2.0, "intro and outro are matched by tag, not by text (their text differs)")
+	check(lines[1]["time"] == 3.0 and lines[1]["end"] == 6.0 and lines[2]["time"] == 7.0 and lines[3]["time"] == 10.0, "line time = first label start, end = last label end (skip ignored)")
+	var b: Dictionary = song["phases"][0]["blanks"][0]
+	check(b["word_start"] == 4.0 and b["word_end"] == 5.0 and b["word_end_marked"] and is_equal_approx(b["pause_at"], 3.95) and b["time"] == b["pause_at"], "blank timing: word_start, marked word_end, pause_at = start - lead, time = pause_at")
+	check(song["length"] == 11.0, "length = the last label end")
+
+	# The marker rule, the default word_end and its cap.
+	var marker_labels := SongLabels.parse("3.00\t4.00\t가나\n4.00\t4.00\t[1] 마바\n4.00\t6.00\t마바다라\n7.00\t9.00\t사아자\n")
+	var marker_song := _fixture_song_sung("가나 ___다라")
+	errors = SongLabels.apply(marker_song, marker_labels, cfg)
+	check(errors.is_empty(), "marker rule: [n] then the same start with the word adds no text (%s)" % str(errors))
+	var mb: Dictionary = marker_song["phases"][0]["blanks"][0]
+	check(mb["word_start"] == 4.0 and is_equal_approx(mb["word_end"], 4.7) and not mb["word_end_marked"], "unmarked end: word_start + blank_word_default_len, word_end_marked false")
+	var capped := SongLabels.parse("3.00\t4.00\t가나\n4.00\t4.00\t[1] 마바\n4.00\t6.00\t마바다라\n4.30\t9.00\t사아자\n")
+	marker_song = _fixture_song_sung("가나 ___다라")
+	SongLabels.apply(marker_song, capped, cfg)
+	check(is_equal_approx(marker_song["phases"][0]["blanks"][0]["word_end"], 4.3), "unmarked end is capped at the next label's start")
+	var no_marker := SongLabels.parse("3.00\t4.00\t가나\n4.00\t4.00\t[1] 마바\n4.00\t6.00\t다라\n7.00\t9.00\t사아자\n")
+	check(SongLabels.apply(_fixture_song_sung("가나 ___ 다라"), no_marker, cfg).is_empty(), "no marker: a [n] label followed by an unrelated label is just the word")
+
+	# A mismatch names the line and the label.
+	var bad := SongLabels.parse(FIXTURE_LABELS.replace("가나", "가가"))
+	var bad_errors := SongLabels.apply(_fixture_song(), bad, cfg)
+	check(bad_errors.size() == 1 and bad_errors[0].contains("가나 ___ 다라") and bad_errors[0].contains("가가") and bad_errors[0].contains("3.00"), "a mismatch stops with the line and the label where it failed: %s" % str(bad_errors))
+	var untouched := _fixture_song()
+	SongLabels.apply(untouched, bad, cfg)
+	check(untouched == _fixture_song(), "a failed apply changes nothing")
+	check(not SongLabels.apply(_fixture_song(), SongLabels.parse("1.00\t2.00\t(intro) 안녕\n3.00\t4.00\t가나\n"), cfg).is_empty(), "running out of labels is an error")
+	check(not SongLabels.apply(_fixture_song(), SongLabels.parse(FIXTURE_LABELS + "12.00\t13.00\t남은 말\n"), cfg).is_empty(), "labels left over after the last line are an error")
+
+	# The real files.
+	var real: Dictionary = SongData.load_file(SONG_PATH)
+	var real_labels := SongLabels.load_file(str(real["labels"]))
+	check(real["audio"] == "res://audio/songs/dalnim_boram.mp3" and not real_labels.is_empty(), "the song names its audio and its label file")
+	var fresh: Dictionary = real.duplicate(true)
+	errors = SongLabels.apply(fresh, real_labels)
+	check(errors.is_empty(), "apply on the real files: every lyric line matched (%s)" % str(errors))
+	check(fresh == real, "the song JSON on disk is what the label file produces (rebuild it with tools/build_song.gd after editing the labels)")
+	var rl: Array = fresh["lines"]
+	var ordered := true
+	for i in range(1, rl.size()):
+		ordered = ordered and rl[i]["time"] >= rl[i - 1]["time"] and rl[i]["end"] >= rl[i]["time"]
+	check(ordered, "line times are in order")
+	check(rl[0]["kind"] == "intro" and rl[0]["end"] <= rl[1]["time"] and rl[-1]["kind"] == "outro" and rl[-1]["time"] >= rl[-2]["end"], "the intro is before the first line and the outro after the last")
+	check(fresh["length"] >= rl[-1]["end"], "the song is as long as its last label")
+	var timing_ok := true
+	var prev_end := -1.0
+	for blank in SongData.flat_blanks(fresh):
+		timing_ok = timing_ok and blank["pause_at"] < blank["word_start"] and blank["word_start"] < blank["word_end"] and blank["pause_at"] > prev_end and blank["time"] == blank["pause_at"]
+		prev_end = blank["word_end"]
+	check(timing_ok and SongData.flat_blanks(fresh).size() == 10, "all 10 blanks: pause_at < word_start < word_end, each after the last blank's word")
+	check(SongData.validate(fresh).is_empty(), "the labelled song validates")
+
+	# Tuning.
+	var t: Dictionary = TuningScript.fight_config()
+	check(t["audio"] == true and t["audio_offset"] == 0.0 and is_equal_approx(t["pause_lead"], 0.05) and is_equal_approx(t["word_default_len"], 0.7), "tuning.json: fight_audio, audio_offset, blank_pause_lead, blank_word_default_len")
+
+	print("Build 4c-a: audio clock")
+	check(is_equal_approx(AudioSongClock.compute_time(10.0, 0.01, 0.03, 0.0), 9.98), "audio time: position + since last mix - output latency")
+	check(is_equal_approx(AudioSongClock.compute_time(10.0, 0.0, 0.0, 0.25), 10.25) and is_equal_approx(AudioSongClock.compute_time(10.0, 0.0, 0.0, -0.25), 9.75), "audio time: audio_offset is added")
+	check(AudioSongClock.never_backwards(9.9, 10.0) == 10.0 and AudioSongClock.never_backwards(10.1, 10.0) == 10.1 and AudioSongClock.never_backwards(0.0, -INF) == 0.0, "audio time never goes backwards (a seek resets the floor)")
+	check(ClassDB.class_has_method("AudioStreamPlayer", "get_playback_position") and ClassDB.class_has_method("AudioServer", "get_time_since_last_mix") and ClassDB.class_has_method("AudioServer", "get_output_latency") and ClassDB.class_has_method("AudioStreamPlayer", "seek"), "the Godot audio API names exist in this build")
+	var s := {"audio": "res://audio/songs/dalnim_boram.mp3"}
+	var win := "windows"
+	check(AudioSongClock.should_use(s, true, PackedStringArray(), win), "backend: audio when the song has a track, the tuning allows it and the display is real")
+	check(not AudioSongClock.should_use({}, true, PackedStringArray(), win), "backend: no track in the song, no audio")
+	check(not AudioSongClock.should_use(s, false, PackedStringArray(), win), "backend: fight_audio false, no audio")
+	check(not AudioSongClock.should_use(s, true, PackedStringArray(["--no-audio"]), win), "backend: --no-audio")
+	check(not AudioSongClock.should_use(s, true, PackedStringArray(["--fight", "eunju", "--fight-auto", "right"]), win), "backend: --fight-auto")
+	check(not AudioSongClock.should_use(s, true, PackedStringArray(["--capture-fight"]), win), "backend: a --capture* mode")
+	check(not AudioSongClock.should_use(s, true, PackedStringArray(), "headless"), "backend: the headless display driver")
+	check(not AudioSongClock.should_use(s, true, PackedStringArray(), win, PackedStringArray(["-s", "res://tests/run_tests.gd"])), "backend: a script run (the tests)")
+	check(AudioSongClock.should_use(s, true, PackedStringArray(["--check-song", "eunju"]), win), "backend: --check-song uses the audio")
+	check(not AudioSongClock.should_use(s, true, PackedStringArray(["--check-song", "eunju", "--no-audio"]), win), "backend: --check-song --no-audio is silent")
+	var WorldScript = load("res://scripts/world.gd")
+	var parsed: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--check-song", "eunju", "--no-audio"]))
+	check(parsed["check_song"] == "eunju" and parsed["no_audio"] and not WorldScript.parse_launch_args(PackedStringArray())["no_audio"], "launch args: --check-song <boss>, --no-audio")
+	check(GameStateScript.resolve_save_path(PackedStringArray(["--check-song", "eunju"])) == GameStateScript.SANDBOX_PATH, "--check-song forces the sandbox save")
+
+	# The real stream.
+	var stream = load("res://audio/songs/dalnim_boram.mp3")
+	check(stream is AudioStream and stream.get_length() > 125.0 and stream.get_length() < 126.5, "the real track loads, about 126 s (Godot reads 125.37 s; the asked range 125.5-126.5 was widened to 125.0) (%s)" % (str(stream.get_length()) if stream is AudioStream else "not loaded"))
+	if stream is AudioStream:
+		var player := AudioStreamPlayer.new()
+		player.stream = stream
+		root.add_child(player)
+		player.play()
+		var started := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - started < 600:
+			await process_frame
+		var advanced: float = player.get_playback_position()
+		player.stop()
+		player.queue_free()
+		if advanced > 0.1:
+			check(true, "the track plays and its position advances (%.2f s)" % advanced)
+		else:
+			print("  SKIP the track's playback position does not advance under this audio driver (%s, position %.2f s): playback and the sync formula are unverified" % [AudioServer.get_driver_name() if AudioServer.has_method("get_driver_name") else "dummy", advanced])
+
+	# The audio clock itself, on this driver (the dummy one under --headless): it follows real
+	# time, never steps back, holds while paused, and a seek lands near its target.
+	if stream is AudioStream:
+		var host := Node.new()
+		root.add_child(host)
+		var clock := AudioSongClock.new(stream, 0.0)
+		clock.mount(host)
+		clock.play()
+		var t0 := Time.get_ticks_msec()
+		var prev := -1.0
+		var monotonic := true
+		var last_ms := t0
+		while Time.get_ticks_msec() - t0 < 700:
+			await process_frame
+			clock.tick((Time.get_ticks_msec() - last_ms) / 1000.0)
+			last_ms = Time.get_ticks_msec()
+			monotonic = monotonic and clock.get_position() >= prev
+			prev = clock.get_position()
+		var elapsed := (Time.get_ticks_msec() - t0) / 1000.0
+		if prev < 0.1:
+			print("  SKIP the audio clock does not advance under this audio driver (position %.2f s after %.2f s)" % [prev, elapsed])
+		else:
+			check(absf(prev - elapsed) < 0.25 and monotonic, "the audio clock follows real time (%.2f s after %.2f s) and never steps back" % [prev, elapsed])
+			clock.pause()
+			var held := clock.get_position()
+			var w0 := Time.get_ticks_msec()
+			while Time.get_ticks_msec() - w0 < 200:
+				await process_frame
+			check(clock.get_position() == held and not clock.is_playing(), "paused: the audio clock holds")
+			clock.resume()
+			clock.seek(60.0)
+			w0 = Time.get_ticks_msec()
+			last_ms = w0
+			while Time.get_ticks_msec() - w0 < 400:
+				await process_frame
+				clock.tick((Time.get_ticks_msec() - last_ms) / 1000.0)
+				last_ms = Time.get_ticks_msec()
+			check(clock.get_position() > 60.2 and clock.get_position() < 60.8, "seek: the audio clock lands near its target 0.4 s on (%.2f s)" % clock.get_position())
+		clock.stop()
+		host.queue_free()
+
+	await _test_audio_tail()
+	await _test_scream_picks()
+
+	print("Build 4c-a: the fight on label times")
+	var gs := _gs()
+	_fresh_fight_state()
+	var fight := _make_fight()
+	await _frames(1)
+	check(fight.clock is SilentSongClock and not fight.clock.has_audio(), "the tests run the silent clock")
+	check(not fight._line_labels[0].visible and not fight._line_labels[-1].visible and fight._line_labels.slice(1, -1).all(func(l): return l.visible), "the panel hides the spoken intro and outro and shows the rest")
+	fight.play_to_freeze()
+	var b1: Dictionary = fight.logic.current()
+	check(is_equal_approx(fight.clock.get_position(), b1["pause_at"]) and fight.state == fight.State.FREEZE, "freeze at the blank's pause_at")
+	fight.pick_right()
+	check(is_equal_approx(fight.clock.get_position(), b1["pause_at"]) and fight.clock.is_playing(), "a right answer resumes from where the freeze stopped")
+	fight.step(0.5)
+	check(is_equal_approx(fight.clock.get_position(), b1["pause_at"] + 0.5) and fight.state == fight.State.BEAT, "the song runs under the counter beat")
+	check(fight.screams == 0 and not fight._scream_label.visible, "a right answer has no scream")
+	fight.finish_beat()
+	fight.play_to_freeze()
+	var b2: Dictionary = fight.logic.current()
+	var hearts: int = gs.hearts_halves
+	fight.pick_wrong()
+	check(is_equal_approx(fight.clock.get_position(), b2["word_end"]) and fight.clock.is_playing(), "a wrong answer seeks to the word's end and plays on (the word is never heard)")
+	check(gs.hearts_halves == hearts - 2 and fight.bursts == 1 and fight.screams == 1, "...with the usual heart loss and blood, plus the scream")
+	check(fight.registry.sfx_list("wrong_scream").size() == 3 and fight.last_scream_path in fight.registry.sfx_list("wrong_scream"), "the registry lists the scream files and a wrong answer started one")
+	check(not fight._scream_label.visible, "...so no [SCREAM] label")
+	fight.finish_beat()
+	fight.play_to_freeze()
+	fight.registry._sfx = {"wrong_scream": ["res://audio/sfx/nope.mp3"]}
+	fight.pick_wrong()
+	check(fight.last_scream_path == "" and fight._scream_label.visible, "no scream file loads: the [SCREAM] label shows")
+	fight.step(1.2)
+	check(not fight._scream_label.visible, "...for about a second")
+	fight.registry._sfx = {"wrong_scream": ["res://audio/sfx/scream1.mp3", "res://audio/sfx/scream2.mp3", "res://audio/sfx/scream3.mp3"]}
+	fight.finish_beat()
+	fight.play_to_freeze()
+	for i in 200:
+		if fight.state == fight.State.FREEZE:
+			fight.step(0.05)
+	check(fight.screams == 3 and fight.last_result["timeout"] and fight.last_scream_path != "" and not fight._scream_label.visible, "a timeout seeks and screams too")
+	fight.queue_free()
+	await _frames(2)
+
+	# After blank 10 the song plays to its end, then the results.
+	_fresh_fight_state()
+	fight = _make_fight()
+	await _frames(1)
+	while fight.logic.has_blank():
+		fight.play_to_freeze()
+		fight.pick_right()
+		fight.finish_beat()
+	check(fight.state == fight.State.PLAYING and fight.logic.finished(), "after the last answer the song plays on")
+	var length: float = fight.song["length"]
+	var last_lyric_end := 0.0
+	for l in fight.song["lines"]:
+		if l["kind"] == "lyric":
+			last_lyric_end = maxf(last_lyric_end, float(l["end"]))
+	check(last_lyric_end > 0.0 and last_lyric_end < length, "the last sung line ends before the track does")
+	while fight.state == fight.State.PLAYING or fight.state == fight.State.BEAT:
+		fight.step(0.05)
+	check(fight.state == fight.State.RESULT and fight.clock.get_position() >= last_lyric_end and fight.clock.get_position() < last_lyric_end + 0.1, "...to the end of the last sung line, then the results show")
+	check(fight.clock.is_playing(), "the music is not stopped when the results show")
+	var at_results: float = fight.clock.get_position()
+	fight.step(0.5)
+	check(fight.state == fight.State.RESULT and is_equal_approx(fight.clock.get_position(), at_results + 0.5) and fight.clock.is_playing(), "the clock keeps advancing under the results")
+	_press_confirm(fight)
+	if fight.state == fight.State.AFTERMATH:
+		fight.step(0.25)
+		check(fight.clock.is_playing() and fight.clock.get_position() > at_results + 0.5, "...and under the survival taunts")
+	while fight.state != fight.State.END:
+		_press_confirm(fight)
+	check(fight.clock.is_playing() or fight.clock.get_position() >= length, "...and into the end card")
+	for i in 400:
+		fight.step(0.5)
+	check(fight.state == fight.State.END and not fight.clock.is_playing() and fight.clock.get_position() >= length, "the clock stops only when the track runs out")
+	fight.queue_free()
+	await _frames(2)
+
+	# Game over, then a retry restarts at 0.
+	_fresh_fight_state()
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(_n): return false)
+	check(fight.state == fight.State.GAME_OVER and not fight.clock.is_playing(), "game over stops the music")
+	fight.retry()
+	check(fight.state == fight.State.PLAYING and fight.clock.get_position() == 0.0 and fight.clock.is_playing(), "a retry restarts the song at 0")
+	fight.queue_free()
+	await _frames(2)
+	gs.new_game()
+
+	await _test_audition()
+	await _test_freeze_timing()
+
+
+func _test_audition() -> void:
+	print("Build 4c-a: the audition")
+	var gs := _gs()
+	var real_labels_path: String = SongData.load_file(SONG_PATH)["labels"]
+	var md5_before := [FileAccess.get_md5(real_labels_path), FileAccess.get_md5(SONG_PATH)]
+	DirAccess.make_dir_recursive_absolute(AUDITION_DIR)
+	var labels_copy := AUDITION_DIR + "/labels.txt"
+	var song_copy := AUDITION_DIR + "/song.json"
+	for p in [labels_copy, song_copy, labels_copy + ".bak"]:
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(p)
+	# A copy of the real labels, with an outro label if the real file has none (it must apply for the audition to work; the real file is never changed).
+	var original := SongTap.with_outro(FileAccess.get_file_as_string(real_labels_path))
+	var f := FileAccess.open(labels_copy, FileAccess.WRITE)
+	f.store_string(original)
+	f.close()
+	f = FileAccess.open(song_copy, FileAccess.WRITE)
+	f.store_string(FileAccess.get_file_as_string(SONG_PATH))
+	f.close()
+	var song: Dictionary = SongData.load_file(song_copy)
+	song["labels"] = labels_copy
+
+	_fresh_fight_state()
+	var fight: Node3D = load("res://scenes/fight.tscn").instantiate()
+	fight.check_mode = true
+	fight.song_path = song_copy
+	fight.setup(song, 3, "", true)
+	root.add_child(fight)
+	await _frames(1)
+	check(fight.audition != null and fight.audition.has_labels() and fight._check_label.visible, "check mode: the audition and its overlay are up")
+	fight.play_to_freeze()
+	var n := int(fight.logic.current()["n"])
+	var info: Dictionary = fight.audition.info(n)
+	fight.step(10.0)
+	check(fight.state == fight.State.FREEZE, "the countdown holds during the audition's freeze")
+	var overlay: String = fight._check_label.text
+	check(overlay.contains("blank 1") and overlay.contains("word_start") and overlay.contains("word_end") and overlay.contains("pause_at") and overlay.contains("Ctrl+S") and not overlay.contains("UNSAVED"), "the overlay shows the blank and its timing, and the keys")
+	_press_key(fight, KEY_RIGHT)
+	var after: Dictionary = fight.audition.info(n)
+	check(is_equal_approx(after["word_start"], info["word_start"] + 0.01) and is_equal_approx(after["pause_at"], info["pause_at"] + 0.01), "Right: word_start +0.01 (pause_at follows)")
+	check(is_equal_approx(fight.logic.current()["pause_at"], after["pause_at"]), "...and the running fight sees it")
+	var shift := InputEventKey.new()
+	shift.keycode = KEY_LEFT
+	shift.shift_pressed = true
+	shift.pressed = true
+	fight._unhandled_input(shift)
+	check(is_equal_approx(fight.audition.info(n)["word_start"], info["word_start"] - 0.04), "Shift+Left: -0.05")
+	_press_key(fight, KEY_PERIOD)
+	_press_key(fight, KEY_PERIOD)
+	_press_key(fight, KEY_COMMA)
+	check(is_equal_approx(fight.audition.info(n)["word_end"], info["word_end"] + 0.01) and fight.audition.info(n)["marked"], "Period x2, Comma: word_end +0.01")
+	fight.step(0.1)
+	check(fight._check_label.text.contains("UNSAVED"), "the UNSAVED flag shows after a nudge")
+	check(FileAccess.get_file_as_string(labels_copy) == original, "nothing is written before a save")
+
+	# Wrong answers cost nothing here.
+	var hearts: int = gs.hearts_halves
+	fight.pick_wrong()
+	check(gs.hearts_halves == hearts and not fight.last_result["right"], "a wrong answer costs no hearts in the audition")
+	fight.finish_beat()
+
+	# P replays from 2 s before the pause and freezes again; N / B jump.
+	fight.play_to_freeze()
+	var at := float(fight.logic.current()["time"])
+	_press_key(fight, KEY_P)
+	check(fight.state == fight.State.PLAYING and is_equal_approx(fight.clock.get_position(), at - 2.0), "P: replay from 2 s before pause_at")
+	check(fight.play_to_freeze() and is_equal_approx(fight.clock.get_position(), at), "...and freeze at pause_at again")
+	var here := int(fight.logic.current()["n"])
+	_press_key(fight, KEY_N)
+	check(int(fight.logic.current()["n"]) == here + 1 and fight.state == fight.State.PLAYING and is_equal_approx(fight.clock.get_position(), float(fight.logic.current()["time"]) - 3.0), "N: 3 s before the next blank's pause_at")
+	_press_key(fight, KEY_B)
+	check(int(fight.logic.current()["n"]) == here and is_equal_approx(fight.clock.get_position(), float(fight.logic.current()["time"]) - 3.0), "B: 3 s before the previous blank's pause_at")
+	check(fight.play_to_freeze() and int(fight.logic.current()["n"]) == here, "...and it freezes there")
+
+	# Save on the temp copy only.
+	var nudged: Dictionary = fight.audition.info(here)
+	var save := InputEventKey.new()
+	save.keycode = KEY_S
+	save.ctrl_pressed = true
+	save.pressed = true
+	fight._unhandled_input(save)
+	check(FileAccess.file_exists(labels_copy + ".bak") and FileAccess.get_file_as_string(labels_copy + ".bak") == original, "Ctrl+S: the labels file is copied to .bak first")
+	var saved := SongLabels.parse(FileAccess.get_file_as_string(labels_copy))
+	var orig := SongLabels.parse(original)
+	var only_blanks := saved.size() == orig.size()
+	var changed := 0
+	for i in orig.size():
+		if saved[i]["text"] != orig[i]["text"] or saved[i]["kind"] != orig[i]["kind"]:
+			only_blanks = false
+		elif saved[i]["start"] != orig[i]["start"] or saved[i]["end"] != orig[i]["end"]:
+			changed += 1
+			only_blanks = only_blanks and saved[i]["kind"] == "blank"
+	check(only_blanks and changed == 1, "the labels are rewritten in the same order with only the [n] label changed (%d changed)" % changed)
+	var disk: Dictionary = SongData.load_file(song_copy)
+	var disk_blank: Dictionary = SongData.flat_blanks(disk)[here - 1]
+	check(is_equal_approx(disk_blank["word_start"], nudged["word_start"]) and is_equal_approx(disk_blank["word_end"], nudged["word_end"]) and SongData.validate(disk).is_empty(), "the song JSON on disk has the new timing")
+	var expected: Dictionary = disk.duplicate(true)
+	check(SongLabels.apply(expected, saved).is_empty() and expected == disk, "...and is exactly what the saved labels produce")
+	fight.step(0.1)
+	check(not fight._check_label.text.contains("UNSAVED"), "the UNSAVED flag clears")
+	_press_key(fight, KEY_RIGHT)
+	var f2 := FileAccess.open(labels_copy + ".bak", FileAccess.WRITE)
+	f2.store_string("marker")
+	f2.close()
+	fight._unhandled_input(save)
+	check(FileAccess.get_file_as_string(labels_copy + ".bak") == "marker", "a second save in the same run leaves the .bak alone (once per run)")
+	fight.queue_free()
+	await _frames(2)
+
+	check([FileAccess.get_md5(real_labels_path), FileAccess.get_md5(SONG_PATH)] == md5_before, "the real labels file and song JSON were never written")
+	gs.new_game()
+
+
+## A clock whose time the test sets by hand and that reports audio (the shape of the audio
+## backend), to drive the fight's freeze trigger without speakers.
+class SetClock extends SongClock:
+	var pos := 0.0
+	var running := false
+	var seeks: Array[float] = []
+
+	func play() -> void:
+		pos = 0.0
+		running = true
+
+	func pause() -> void:
+		running = false
+
+	func resume() -> void:
+		running = true
+
+	func seek(seconds: float) -> void:
+		pos = seconds
+		seeks.append(seconds)
+
+	func get_position() -> float:
+		return pos
+
+	func is_playing() -> bool:
+		return running
+
+	func has_audio() -> bool:
+		return true
+
+
+## The freeze happens when the clock reaches the blank's pause_at (from the labels file), not
+## when its line starts. Expected times are read from the labels, never hard-coded.
+func _test_freeze_timing() -> void:
+	print("Freeze timing (pause_at, not the line's start)")
+	var gs := _gs()
+	var song: Dictionary = SongData.load_file(SONG_PATH)
+	var labels := SongLabels.load_file(str(song["labels"]))
+	var lead: float = TuningScript.fight_config()["pause_lead"]
+	var blanks := SongData.flat_blanks(song)
+	var label_of := {}
+	for l in labels:
+		if l["kind"] == "blank":
+			label_of[int(l["n"])] = l
+	var data_ok := blanks.size() == 10 and label_of.size() == 10
+	for b in blanks:
+		var l: Dictionary = label_of.get(int(b["n"]), {})
+		data_ok = data_ok and not l.is_empty() and absf(float(b["word_start"]) - float(l["start"])) < 0.0015 				and absf(float(b["pause_at"]) - (float(l["start"]) - lead)) < 0.0015 				and float(b["word_end"]) >= float(b["word_start"]) and float(b["time"]) == float(b["pause_at"])
+	check(data_ok, "every blank: word_start = its [n] label's start, pause_at = word_start - blank_pause_lead, word_end >= word_start")
+
+	# A silent-clock run in small frames.
+	_fresh_fight_state()
+	var fight := _make_fight()
+	await _frames(1)
+	var dt := 0.016
+	var freezes: Array[Dictionary] = []
+	var guard := 0
+	while fight.logic.has_blank() and guard < 20000:
+		fight.step(dt)
+		guard += 1
+		if fight.state == fight.State.FREEZE:
+			var cur := 0  # the panel's current line: the last one started by now
+			for li in song["lines"].size():
+				if float(song["lines"][li]["time"]) <= fight.clock.get_position():
+					cur = li
+			freezes.append({"n": int(fight.logic.current()["n"]), "at": fight.clock.get_position(),
+					"on_panel": cur == fight._line_of(fight.logic.current()) and fight._line_labels[cur].text.contains("[ ____ ]")})
+			fight.pick_right()
+			fight.finish_beat(dt)
+	check(freezes.size() == 10, "a silent run freezes exactly 10 times (%d)" % freezes.size())
+	var in_order := true
+	var at_pause := true
+	var at_line_start := false
+	var line_times: Array = song["lines"].map(func(l): return float(l["time"]))
+	for i in freezes.size():
+		var b: Dictionary = blanks[i]
+		in_order = in_order and freezes[i]["n"] == i + 1
+		at_pause = at_pause and absf(freezes[i]["at"] - float(b["pause_at"])) <= dt + 0.0001
+		var is_pause_too := false
+		for lt in line_times:
+			if absf(freezes[i]["at"] - lt) <= dt + 0.0001:
+				is_pause_too = true
+		if is_pause_too and not at_pause:
+			at_line_start = true
+	check(in_order and at_pause, "...in blank order, each at its blank's pause_at (within one step)")
+	var line_start_freeze := false
+	for i in freezes.size():
+		var ln: int = fight._line_of(blanks[i])
+		var line_start := float(song["lines"][ln]["time"])
+		if absf(float(blanks[i]["pause_at"]) - line_start) > dt + 0.0001 and absf(freezes[i]["at"] - line_start) <= dt + 0.0001:
+			line_start_freeze = true
+	check(not line_start_freeze and not at_line_start, "...and none at its line's start")
+	check(freezes.all(func(f): return f["on_panel"]), "...with the blank's line already the one on the panel (shown with its gap)")
+	fight.queue_free()
+	await _frames(2)
+
+	# Resume points.
+	_fresh_fight_state()
+	fight = _make_fight()
+	await _frames(1)
+	fight.play_to_freeze()
+	var b1: Dictionary = fight.logic.current()
+	fight.pick_right()
+	check(is_equal_approx(fight.clock.get_position(), float(b1["pause_at"])) and fight.clock.is_playing(), "right: the clock resumes at the freeze time")
+	fight.finish_beat()
+	fight.play_to_freeze()
+	var b2: Dictionary = fight.logic.current()
+	fight.pick_wrong()
+	check(is_equal_approx(fight.clock.get_position(), float(b2["word_end"])) and fight.clock.is_playing(), "wrong: the clock resumes at word_end")
+	fight.finish_beat()
+	fight.play_to_freeze()
+	var b3: Dictionary = fight.logic.current()
+	for i in 400:
+		if fight.state == fight.State.FREEZE:
+			fight.step(0.05)
+	check(fight.last_result["timeout"] and is_equal_approx(fight.clock.get_position(), float(b3["word_end"])), "timeout: the clock resumes at word_end")
+	fight.queue_free()
+	await _frames(2)
+
+	# The audio-shaped clock goes through the same trigger.
+	_fresh_fight_state()
+	var set_clock := SetClock.new()
+	fight = _make_fight(3, "", set_clock)
+	await _frames(1)
+	var p1 := float(fight.logic.current()["pause_at"])
+	var line1 := float(song["lines"][fight._line_of(fight.logic.current())]["time"])
+	set_clock.pos = p1 - 0.01
+	fight.step(0.0)
+	check(fight.state == fight.State.PLAYING, "an audio-shaped clock just before pause_at: no freeze")
+	check(line1 < p1 - 0.5, "(blank 1's line starts well before its pause_at)")
+	set_clock.pos = line1 + 0.01
+	fight.step(0.0)
+	check(fight.state == fight.State.PLAYING, "...none at the line's start either")
+	set_clock.pos = p1
+	fight.step(0.0)
+	check(fight.state == fight.State.FREEZE and not set_clock.running, "...it freezes (and holds the clock) when the clock reaches pause_at")
+	fight.queue_free()
+	await _frames(2)
+
+	# Audition jump: 3 s before blank 5's pause_at.
+	_fresh_fight_state()
+	fight = _make_fight()
+	await _frames(1)
+	fight.audition_jump(4)
+	check(is_equal_approx(fight.clock.get_position(), float(blanks[4]["pause_at"]) - 3.0), "a jump to blank 5 lands 3 s before its pause_at")
+	var fired: Array[int] = []
+	guard = 0
+	while fight.logic.has_blank() and guard < 20000:
+		fight.step(dt)
+		guard += 1
+		if fight.state == fight.State.FREEZE:
+			fired.append(int(fight.logic.current()["n"]))
+			fight.pick_right()
+			fight.finish_beat(dt)
+	check(fired == [5, 6, 7, 8, 9, 10], "after the jump blanks 1-4 do not fire and 5-10 do (%s)" % str(fired))
+	fight.queue_free()
+	await _frames(2)
+
+	# A retry resets all ten.
+	_fresh_fight_state()
+	fight = _make_fight()
+	await _frames(1)
+	fight.run_scripted(func(_n): return false)
+	fight.retry()
+	var again := 0
+	guard = 0
+	while fight.logic.has_blank() and guard < 20000:
+		fight.step(dt)
+		guard += 1
+		if fight.state == fight.State.FREEZE:
+			again += 1
+			fight.pick_right()
+			fight.finish_beat(dt)
+	check(again == 10, "after a retry all ten blanks fire again (%d)" % again)
+	fight.queue_free()
+	await _frames(2)
+	gs.new_game()
+
+
+# ── Build 4c-b: labels at load, the stale check, the tap tool ────────────
+
+const TAP_DIR := "user://sandbox/tap_test"
+const REAL_LABELS := "res://data/songs/eunju_dalnim_boram.labels.txt"
+
+
+func _write_text(path: String, text: String) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(text)
+	f.close()
+
+
+## The md5 of the real song JSON and labels file (and the .bak the tap tool would make); "" for a missing file.
+func _real_song_md5s() -> Array:
+	return [SONG_PATH, REAL_LABELS, REAL_LABELS + ".bak"].map(func(p): return FileAccess.get_md5(p) if FileAccess.file_exists(p) else "")
+
+
+## Fresh temp copies of the labels (with an outro label added if the real file has none, so they apply)
+## and of the song JSON: {"labels": path, "json": path}. The real files are only read.
+func _tap_files(labels_text := "") -> Dictionary:
+	DirAccess.make_dir_recursive_absolute(TAP_DIR)
+	var files := {"labels": TAP_DIR + "/labels.txt", "json": TAP_DIR + "/song.json"}
+	if FileAccess.file_exists(files["labels"] + ".bak"):
+		DirAccess.remove_absolute(files["labels"] + ".bak")
+	_write_text(files["labels"], labels_text if labels_text != "" else SongTap.with_outro(FileAccess.get_file_as_string(REAL_LABELS)))
+	_write_text(files["json"], FileAccess.get_file_as_string(SONG_PATH))
+	return files
+
+
+## The song, its timing re-derived from its own labels file the way build_song.gd does, from the JSON on disk.
+func _label_timing(song: Dictionary) -> Dictionary:
+	var out := {"lines": song["lines"].map(func(l): return [l["time"], l["end"]]), "length": song["length"], "blanks": []}
+	for b in SongData.flat_blanks(song):
+		out["blanks"].append([b["n"], b["word_start"], b["word_end"], b["word_end_marked"], b["pause_at"], b["time"]])
+	return out
+
+
+func _test_build_4cb() -> void:
+	print("Build 4c-b: labels at load")
+	var gs := _gs()
+	var baked: Dictionary = SongData.load_file(SONG_PATH)
+	var real_text := FileAccess.get_file_as_string(REAL_LABELS)
+
+	# Labels win at load: in-memory times follow the labels file; the JSON file is not touched.
+	var files := _tap_files()
+	var moved := SongLabels.parse(FileAccess.get_file_as_string(files["labels"]))
+	var moved_start := 0.0
+	for l in moved:
+		if l["kind"] == "blank" and int(l["n"]) == 1:
+			l["start"] = float(l["start"]) + 0.3
+			l["end"] = float(l["end"]) + 0.3
+			moved_start = l["start"]
+	_write_text(files["labels"], SongLabels.serialize_full(moved, SongLabels.eol_of(real_text)))
+	var song: Dictionary = baked.duplicate(true)
+	song["labels"] = files["labels"]
+	var applied_err := SongLabels.load_and_apply(song)
+	var b1: Dictionary = SongData.flat_blanks(song)[0]
+	check(applied_err == "" and absf(float(b1["word_start"]) - moved_start) < 0.0006 and absf(float(b1["pause_at"]) - (moved_start - 0.05)) < 0.0006, "load: the in-memory blank times follow the labels file (blank 1 word_start %.3f)" % float(b1["word_start"]))
+	check(absf(float(SongData.flat_blanks(baked)[0]["word_start"]) - moved_start) > 0.05, "...and differ from the times baked in the JSON")
+	var no_labels: Dictionary = baked.duplicate(true)
+	no_labels.erase("labels")
+	var missing: Dictionary = baked.duplicate(true)
+	missing["labels"] = TAP_DIR + "/no_such_file.txt"
+	check(SongLabels.load_and_apply(no_labels) == "" and no_labels["phases"] == baked["phases"] and SongLabels.load_and_apply(missing) == "" and missing["phases"] == baked["phases"], "load: a song with no labels, or a labels file that does not exist, keeps its baked times without an error")
+
+	# A bad labels file: the error is returned (and logged), the baked times stay.
+	var bad_path := TAP_DIR + "/bad_labels.txt"
+	_write_text(bad_path, "1.0\t2.0\tnot the song\n")
+	var bad_song: Dictionary = baked.duplicate(true)
+	bad_song["labels"] = bad_path
+	var bad_err := SongLabels.load_and_apply(bad_song)
+	check(bad_err != "" and bad_err.contains("bad_labels.txt") and bad_song["phases"] == baked["phases"] and bad_song["lines"] == baked["lines"] and bad_song["length"] == baked["length"], "load: labels that do not apply give an error naming the file, and the song keeps its baked times (%s)" % bad_err.left(80))
+
+	# The fight shows it and runs on the baked times; a good file shows nothing.
+	_fresh_fight_state()
+	var fight: Node3D = load("res://scenes/fight.tscn").instantiate()
+	fight.labels_error = bad_err
+	fight.setup(bad_song, 3, "", true)
+	root.add_child(fight)
+	await _frames(1)
+	check(fight._labels_error_label.visible and fight._labels_error_label.text.contains(bad_err), "load: a labels error is shown on the fight's screen")
+	check(is_equal_approx(float(fight.logic.current()["time"]), float(SongData.flat_blanks(baked)[0]["time"])), "...and the fight runs on the baked times")
+	fight.queue_free()
+	await _frames(2)
+	_fresh_fight_state()
+	fight = load("res://scenes/fight.tscn").instantiate()
+	fight.setup(song, 3, "", true)
+	root.add_child(fight)
+	await _frames(1)
+	check(not fight._labels_error_label.visible and is_equal_approx(float(fight.logic.current()["time"]), moved_start - 0.05), "load: with labels that apply there is no error and the fight freezes at the label's pause_at")
+	fight.queue_free()
+	await _frames(2)
+
+	# World wires it into start_fight (the same song and error as applying the labels by hand).
+	gs.new_game()
+	var world: Node = await _start_world()
+	var expect: Dictionary = SongData.load_file(SONG_PATH)
+	var expect_err := SongLabels.load_and_apply(expect)
+	var wf: Node = world.start_fight("eunju", "", false, true)
+	await _frames(2)
+	check(wf != null and wf.labels_error == expect_err and wf.song == expect, "World.start_fight applies the song's labels in memory")
+	await _stop_world(world)
+	gs.new_game()
+
+	# The stale check: the timing baked into the JSON equals what the labels file gives.
+	var fresh: Dictionary = baked.duplicate(true)
+	var real_err := SongLabels.load_and_apply(fresh)
+	check(real_err == "", "stale check: the real labels file applies to the song (%s)" % real_err)
+	var want := _label_timing(fresh)
+	var have := _label_timing(baked)
+	var diff := "equal"
+	if want != have:
+		diff = "lines" if want["lines"] != have["lines"] else ("length" if want["length"] != have["length"] else "blank %s" % str(want["blanks"].filter(func(b): return not have["blanks"].has(b)).map(func(b): return b[0])))
+	if real_err == "":
+		check(want == have, "stale check: the timing baked in eunju_dalnim.json equals the labels' timing (differs in: %s). Run the tap tool (--mark-song eunju) or tools/build_song.gd to bring the JSON up to date" % diff)
+
+	_test_tap_logic()
+	_test_tap_save()
+	await _test_tap_tool()
+	await _test_tap_tool_input()
+	_test_mark_song_args()
+
+
+func _test_tap_logic() -> void:
+	print("Build 4c-b: tap tool logic")
+	# The click track: made in code, 8 clicks 0.75 s apart.
+	var clicks := SongTap.click_times()
+	check(clicks.size() == 8 and is_equal_approx(clicks[1] - clicks[0], 0.75) and is_equal_approx(clicks[7] - clicks[0], 5.25), "8 clicks, 0.75 s apart")
+	var wav := SongTap.click_stream()
+	var pcm := wav.data
+	var loud_at_clicks := true
+	for t in clicks:
+		var peak := 0
+		for i in range(int(t * wav.mix_rate), int(t * wav.mix_rate) + 400):
+			peak = maxi(peak, absi(pcm.decode_s16(i * 2)))
+		loud_at_clicks = loud_at_clicks and peak > 5000
+	var quiet_between := true
+	for i in range(int(0.2 * wav.mix_rate), int(0.8 * wav.mix_rate)):
+		quiet_between = quiet_between and pcm.decode_s16(i * 2) == 0
+	check(wav.format == AudioStreamWAV.FORMAT_16_BITS and wav.get_length() > SongTap.click_track_end() - 0.3 and loud_at_clicks and quiet_between, "the click track is sound at each click and silence between (%.2f s)" % wav.get_length())
+
+	# Matching taps to clicks.
+	var late := clicks.map(func(c): return c + 0.1)
+	var all := SongTap.match_taps(late, clicks)
+	check(all.size() == 8 and all.all(func(o): return is_equal_approx(o, 0.1)), "match_taps: 8 taps 0.1 s late give 8 offsets of 0.1")
+	var missed := late.duplicate()
+	missed.remove_at(2)
+	check(SongTap.match_taps(missed, clicks).size() == 7, "match_taps: a missed click is skipped, the others still match")
+	var doubled := late.duplicate()
+	doubled.insert(1, clicks[0] + 0.3)  # a second tap for click 0, nearer click 0 than click 1
+	var d := SongTap.match_taps(doubled, clicks)
+	check(d.size() == 8 and is_equal_approx(d[0], 0.1), "match_taps: a click keeps its first tap")
+	var between := SongTap.match_taps([clicks[0] + 0.5], clicks)
+	check(between.size() == 1 and is_equal_approx(between[0], -0.25) and SongTap.match_taps([0.0], clicks).is_empty(), "match_taps: a tap goes to the nearest click, and one more than half a gap from every click is ignored")
+
+	# Lag: median of the last 6, clamped to 0..0.4.
+	check(SongTap.median([3.0, 1.0, 2.0]) == 2.0 and is_equal_approx(SongTap.median([4.0, 1.0, 2.0, 3.0]), 2.5) and SongTap.median([]) == 0.0, "median: odd, even, empty")
+	check(is_equal_approx(SongTap.calibration_lag([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]), 0.1), "lag: all 0.1 -> 0.1")
+	check(is_equal_approx(SongTap.calibration_lag([5.0, 5.0, 0.2, 0.3, 0.2, 0.3, 0.2, 0.3]), 0.25), "lag: only the last 6 taps count (the median of 0.2 0.3 0.2 0.3 0.2 0.3)")
+	check(is_equal_approx(SongTap.calibration_lag([0.0, 0.0, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9]), 0.4), "lag: clamped to 0.4")
+	check(SongTap.calibration_lag([-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2]) == 0.0, "lag: clamped to 0 (anticipating the click is not a negative lag)")
+	check(SongTap.calibration_lag([0.1, 0.1, 0.1, 0.1, 0.1]) == -1.0 and SongTap.calibration_lag([]) == -1.0, "lag: fewer than 6 taps is no lag (redo)")
+	check(is_equal_approx(SongTap.calibration_lag([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]), 0.1), "lag: exactly 6 taps is enough")
+
+	# Onset and end from press and release, minus the lag.
+	var m := SongTap.measure(10.5, 11.7, 0.1)
+	check(is_equal_approx(m["onset"], 10.4) and is_equal_approx(m["end"], 11.6), "measure: onset = press - lag, end = release - lag")
+
+	# Two passes within 0.25 s: averaged; further apart: a third; then the median.
+	var p := func(onset, end): return {"onset": onset, "end": end}
+	check(not SongTap.resolve([]).get("done") and not SongTap.resolve([p.call(10.0, 11.0)]).get("done"), "resolve: one pass is never enough")
+	var avg := SongTap.resolve([p.call(10.0, 11.0), p.call(10.2, 11.4)])
+	check(avg["done"] and is_equal_approx(avg["onset"], 10.1) and is_equal_approx(avg["end"], 11.2), "resolve: two onsets 0.2 apart are averaged")
+	var edge := SongTap.resolve([p.call(10.0, 11.0), p.call(10.25, 11.5)])
+	check(edge["done"] and is_equal_approx(edge["onset"], 10.125), "resolve: exactly 0.25 apart still averages")
+	var far := SongTap.resolve([p.call(10.0, 11.0), p.call(10.3, 11.5)])
+	check(not far["done"], "resolve: 0.3 apart needs a third pass")
+	var med := SongTap.resolve([p.call(10.0, 11.0), p.call(10.6, 11.5), p.call(10.2, 12.0)])
+	check(med["done"] and is_equal_approx(med["onset"], 10.2) and is_equal_approx(med["end"], 11.5), "resolve: with three passes the median of the onsets and of the ends")
+	var outlier := SongTap.resolve([p.call(10.0, 11.0), p.call(12.0, 13.0), p.call(10.1, 11.1)])
+	check(is_equal_approx(outlier["onset"], 10.1) and is_equal_approx(outlier["end"], 11.1), "resolve: the median drops an outlier pass")
+
+	# The labels edit: only the [n] label, plus its marker partner.
+	var plain := SongLabels.parse("3.00\t4.00\t가나\n4.00\t5.00\t[1] 마바\n5.00\t6.00\t다라\n7.00\t9.00\t사아자\n")
+	var r := SongTap.with_blank_timing(plain, 1, 4.2, 4.9)
+	var out: Array = r["labels"]
+	check(r["error"] == "" and out.size() == 4 and out[1]["start"] == 4.2 and out[1]["end"] == 4.9 and out[1]["text"] == "[1] 마바", "with_blank_timing: the [n] label gets the new start and end")
+	check(out[0] == plain[0] and out[2] == plain[2] and out[3] == plain[3] and plain[1]["start"] == 4.0, "...nothing else changes (and the input is not modified)")
+	var marker := SongLabels.parse("3.00\t4.00\t가나\n4.00\t4.00\t[1] 마바\n4.00\t6.00\t마바다라\n7.00\t9.00\t사아자\n")
+	check(SongLabels.is_marker(marker, 1), "(the fixture's [1] is a zero-width marker for the next label)")
+	r = SongTap.with_blank_timing(marker, 1, 4.2, 5.1)
+	out = r["labels"]
+	check(r["error"] == "" and out[1]["start"] == 4.2 and out[1]["end"] == 5.1 and out[2]["start"] == 4.2 and out[2]["end"] == 6.0 and out[2]["text"] == "마바다라", "with_blank_timing: a marker's partner label starts at the new onset too (its end stays)")
+	check(SongLabels.is_marker(out, 1) and out[0] == marker[0] and out[3] == marker[3], "...so the marker rule still holds, and the other labels are unchanged")
+	r = SongTap.with_blank_timing(marker, 1, 4.3, 4.2)
+	check(r["error"] != "" and r["labels"] == marker, "with_blank_timing: an end before the start is refused")
+	r = SongTap.with_blank_timing(marker, 1, 6.5, 7.0)
+	check(r["error"] != "", "with_blank_timing: an onset past the partner's end is refused")
+	check(SongTap.with_blank_timing(marker, 2, 4.0, 5.0)["error"] != "", "with_blank_timing: an unknown blank is refused")
+
+	# The file text: full precision, the file's own line ending, nothing else reformatted.
+	var crlf := "2.000000\t3.000000\t(intro) 안녕\r\n20.728842\t22.728842\t노른자\r\n"
+	check(SongLabels.eol_of(crlf) == "\r\n" and SongLabels.eol_of("a\tb\n") == "\n", "eol_of: CRLF or LF")
+	check(SongLabels.serialize_full(SongLabels.parse(crlf), "\r\n") == crlf, "serialize_full: Audacity's 6-decimal CRLF text round-trips byte for byte")
+	var with_outro := SongTap.with_outro("1.00\t2.00\t(intro) 가\n3.00\t4.00\t나\n")
+	check(SongLabels.parse(with_outro).size() == 3 and SongLabels.parse(with_outro)[2]["kind"] == "outro" and SongTap.with_outro(with_outro) == with_outro, "with_outro (test scaffolding): adds a missing outro label once")
+
+	# parse: a run of tabs is one separator; a line it still cannot read is an error naming its line number.
+	var tabs := SongLabels.parse("114.000000\t\t116.000000\t\t(outro) 끝\r\n1.0\t\t\t2.0\t가 나\t다\r\n")
+	check(tabs.size() == 2 and tabs[0]["kind"] == "outro" and tabs[0]["start"] == 114.0 and tabs[0]["end"] == 116.0 and tabs[0]["body"] == "끝", "parse: double tabs between columns are one separator (the line that was dropped before)")
+	check(tabs[1]["start"] == 1.0 and tabs[1]["end"] == 2.0 and tabs[1]["text"] == "가 나\t다", "parse: a run of tabs between columns is one separator; a tab inside the text is kept")
+	check(SongLabels.parse_errors("1.00\t2.00\t가\n3.00\t4.00\t나\n").is_empty() and SongLabels.parse_errors("1.00\t\t2.00\t\t가\n\n   \n").is_empty(), "parse_errors: good lines, double tabs and blank lines are fine")
+	var perr := SongLabels.parse_errors("1.00\t2.00\t가\nnot a label\n3.00 4.00 spaces only\n5.00\tx\t나\n6.00\t7.00\n8.00\t9.00\t다\n")
+	check(perr.size() == 4 and perr[0].begins_with("line 2 ") and perr[0].contains("not a label") and perr[1].begins_with("line 3 ") and perr[2].begins_with("line 4 ") and perr[3].begins_with("line 5 "), "parse_errors: every unreadable line is named by its line number (%s)" % str(perr))
+	var dropped := _tap_files(SongTap.with_outro(FileAccess.get_file_as_string(REAL_LABELS)).replace("(outro)", "(outro)") + "oops\n")
+	var oops_song: Dictionary = SongData.load_file(dropped["json"])
+	oops_song["labels"] = dropped["labels"]
+	var oops_err := SongLabels.load_and_apply(oops_song)
+	check(oops_err.contains("line 48") and oops_song["phases"] == SongData.load_file(SONG_PATH)["phases"], "load_and_apply: an unreadable line is an error naming it, and the baked times stay (%s)" % oops_err.left(90))
+	var save_oops := SongTap.save_blank(dropped["labels"], dropped["json"], 3, 44.2, 45.5)
+	check(not save_oops["errors"].is_empty() and str(save_oops["errors"][0]).contains("line 48") and not FileAccess.file_exists(dropped["labels"] + ".bak"), "save: an unreadable line stops the save before anything is written")
+	check(SongLabels.parse_errors(FileAccess.get_file_as_string(REAL_LABELS)).is_empty(), "the real labels file: every line is a label")
+
+
+func _test_tap_save() -> void:
+	print("Build 4c-b: tap tool save")
+	var md5_before := _real_song_md5s()
+
+	# The real song's labels, on temp copies.
+	var files := _tap_files()
+	var text_before := FileAccess.get_file_as_string(files["labels"])
+	var json_before := FileAccess.get_file_as_string(files["json"])
+	var labels_before := SongLabels.parse(text_before)
+	var res := SongTap.save_blank(files["labels"], files["json"], 3, 44.2, 45.5)
+	check(res["errors"].is_empty() and res["backed_up"], "save: blank 3 saved (%s)" % str(res["errors"]))
+	check(FileAccess.file_exists(files["labels"] + ".bak") and FileAccess.get_file_as_string(files["labels"] + ".bak") == text_before, "save: the labels file was copied to .bak first")
+	var labels_after := SongLabels.parse(FileAccess.get_file_as_string(files["labels"]))
+	var changed := []
+	for i in labels_after.size():
+		if labels_after[i] != labels_before[i]:
+			changed.append(i)
+	var blank3 := labels_before.find_custom(func(l): return l["kind"] == "blank" and int(l["n"]) == 3)
+	check(labels_after.size() == labels_before.size() and changed == [blank3] and labels_after[blank3]["start"] == 44.2 and labels_after[blank3]["end"] == 45.5 and labels_after[blank3]["text"] == labels_before[blank3]["text"], "save: only the [3] label changed, in place (changed: %s)" % str(changed))
+	var new_text := FileAccess.get_file_as_string(files["labels"])
+	check(new_text.contains("\r\n") == text_before.contains("\r\n") and new_text.split("\n").size() == text_before.split("\n").size(), "save: the file keeps its line endings and line count")
+	var untouched_lines := 0
+	var old_lines := text_before.split("\n")
+	var new_lines := new_text.split("\n")
+	for i in old_lines.size():
+		untouched_lines += 1 if old_lines[i] == new_lines[i] else 0
+	check(untouched_lines == old_lines.size() - 1, "save: every other line of the file is byte for byte the same (%d of %d)" % [untouched_lines, old_lines.size()])
+	var disk = JSON.parse_string(FileAccess.get_file_as_string(files["json"]))
+	var expect = JSON.parse_string(json_before)
+	check(SongLabels.apply(expect, labels_after).is_empty() and disk == expect, "save: the song JSON is exactly what the saved labels produce")
+	var b3: Dictionary = SongData.flat_blanks(disk)[2]
+	check(b3["word_start"] == 44.2 and b3["word_end"] == 45.5 and is_equal_approx(b3["pause_at"], 44.15) and b3["word_end_marked"], "save: blank 3 in the JSON has the new word_start, word_end and pause_at")
+	# A second save in the same run leaves the .bak alone.
+	_write_text(files["labels"] + ".bak", "marker")
+	res = SongTap.save_blank(files["labels"], files["json"], 4, 56.6, 57.0, true)
+	check(res["errors"].is_empty() and FileAccess.get_file_as_string(files["labels"] + ".bak") == "marker", "save: the .bak is made once per run")
+
+	# A marker label: the partner moves with it.
+	var fx_labels := "3.00\t4.00\t가나\n4.00\t4.00\t[1] 마바\n4.00\t6.00\t마바다라\n7.00\t9.00\t사아자\n"
+	var fx_song := _fixture_song_sung("가나 ___다라")
+	var fx := {"labels": TAP_DIR + "/fx_labels.txt", "json": TAP_DIR + "/fx_song.json"}
+	_write_text(fx["labels"], fx_labels)
+	_write_text(fx["json"], JSON.stringify(fx_song, "\t", false) + "\n")
+	if FileAccess.file_exists(fx["labels"] + ".bak"):
+		DirAccess.remove_absolute(fx["labels"] + ".bak")
+	res = SongTap.save_blank(fx["labels"], fx["json"], 1, 4.2, 5.1)
+	var fx_after := SongLabels.parse(FileAccess.get_file_as_string(fx["labels"]))
+	check(res["errors"].is_empty() and fx_after[1]["start"] == 4.2 and fx_after[1]["end"] == 5.1 and fx_after[2]["start"] == 4.2 and fx_after[2]["end"] == 6.0 and SongLabels.is_marker(fx_after, 1) and fx_after[0]["start"] == 3.0 and fx_after[3]["start"] == 7.0, "save: a zero-width marker's partner label moves with it and the marker rule holds (%s)" % str(res["errors"]))
+	var fx_disk = JSON.parse_string(FileAccess.get_file_as_string(fx["json"]))
+	check(fx_disk["phases"][0]["blanks"][0]["word_start"] == 4.2 and fx_disk["lines"][0]["time"] == 3.0, "save: the fixture song JSON follows")
+
+	# A save that cannot be applied writes nothing at all.
+	var broken := {"labels": TAP_DIR + "/broken_labels.txt", "json": TAP_DIR + "/broken_song.json"}
+	_write_text(broken["labels"], fx_labels.replace("7.00\t9.00\t사아자\n", "7.00\t9.00\t다른 말\n"))
+	_write_text(broken["json"], FileAccess.get_file_as_string(fx["json"]))
+	var broken_md5 := [FileAccess.get_md5(broken["labels"]), FileAccess.get_md5(broken["json"])]
+	if FileAccess.file_exists(broken["labels"] + ".bak"):
+		DirAccess.remove_absolute(broken["labels"] + ".bak")
+	res = SongTap.save_blank(broken["labels"], broken["json"], 1, 4.2, 5.1)
+	check(not res["errors"].is_empty() and [FileAccess.get_md5(broken["labels"]), FileAccess.get_md5(broken["json"])] == broken_md5 and not FileAccess.file_exists(broken["labels"] + ".bak"), "save: labels that do not apply -> an error, and no file (not even the .bak) is written")
+	res = SongTap.save_blank(fx["labels"], fx["json"], 1, 5.0, 4.0)
+	check(not res["errors"].is_empty(), "save: an end before the start is an error")
+
+	check(_real_song_md5s() == md5_before, "the real labels file and song JSON are byte-identical after the save tests (and no .bak was made)")
+
+
+## Presses and releases keys on the tool, and steps its clocks.
+func _tap_key(tool: SongTapTool, keycode: int) -> void:
+	tool.handle_key(keycode, true)
+	tool.handle_key(keycode, false)
+
+
+## One measured pass on the silent clock: Space down at `press` and up at `release` (song seconds).
+func _tap_pass(tool: SongTapTool, press: float, release: float) -> void:
+	tool.advance_until(tool.song_clock, press)
+	tool.handle_key(KEY_SPACE, true)
+	tool.advance_until(tool.song_clock, release)
+	tool.handle_key(KEY_SPACE, false)
+	tool.step(SongTapTool.GAP_TIME + 0.05)
+
+
+func _test_tap_tool() -> void:
+	print("Build 4c-b: tap tool (silent clocks, temp copies)")
+	var md5_before := _real_song_md5s()
+	var files := _tap_files()
+	var labels_text0 := FileAccess.get_file_as_string(files["labels"])
+	var song: Dictionary = SongData.load_file(files["json"])
+	song["labels"] = files["labels"]
+	var tool := SongTapTool.new()
+	tool.setup(song, files["json"], SilentSongClock.new(), SilentSongClock.new(), true)
+	root.add_child(tool)
+	await _frames(1)
+	check(tool.state == SongTapTool.State.CAL_READY and tool.lag < 0.0, "starts at the calibration, with no lag")
+	var ui := tool.find_children("*", "Label", true, false).map(func(l): return l.text)
+	check(ui.any(func(t): return t.contains("calibrate")) and ui.any(func(t): return t.contains("Enter")), "the screen names the step and the keys")
+
+	# Calibration: 8 clicks, each tapped 0.1 s late.
+	_tap_key(tool, KEY_ENTER)
+	check(tool.state == SongTapTool.State.CAL_PLAY and tool.click_clock.is_playing(), "Enter plays the clicks")
+	for c in SongTap.click_times():
+		tool.advance_until(tool.click_clock, c + 0.1)
+		_tap_key(tool, KEY_SPACE)
+	tool.advance_until(tool.click_clock, SongTap.click_track_end() + 0.05)
+	check(tool.state == SongTapTool.State.CAL_DONE and absf(tool.lag - 0.1) < 0.011, "after the clicks the lag is measured (%.3f s)" % tool.lag)
+	_tap_key(tool, KEY_R)
+	check(tool.state == SongTapTool.State.CAL_READY and tool.lag < 0.0, "R redoes the calibration")
+	_tap_key(tool, KEY_ENTER)
+	for c in SongTap.click_times():
+		tool.advance_until(tool.click_clock, c + 0.2)
+		_tap_key(tool, KEY_SPACE)
+	tool.advance_until(tool.click_clock, SongTap.click_track_end() + 0.05)
+	var lag := tool.lag
+	check(absf(lag - 0.2) < 0.011, "...and measures again (%.3f s)" % lag)
+	_tap_key(tool, KEY_ENTER)
+	check(tool.state == SongTapTool.State.PASS and tool.blank_index == 0 and tool.passes.is_empty(), "Enter accepts the lag and starts blank 1")
+
+	# Blank 1: the song starts 4 s before its word_start.
+	var ws := float(SongData.flat_blanks(song)[0]["word_start"])
+	check(absf(tool.song_clock.get_position() - (ws - SongTap.LEAD_IN)) < 0.02 and tool.song_clock.is_playing(), "the song plays from 4 s before the blank word")
+	# Two passes 0.1 s apart in onset: averaged. Held keys are on the song clock minus the lag.
+	_tap_pass(tool, ws + 0.3 + lag, ws + 1.1 + lag)
+	check(tool.state == SongTapTool.State.PASS and tool.passes.size() == 1 and absf(tool.passes[0]["onset"] - (ws + 0.3)) < 0.011 and absf(tool.passes[0]["end"] - (ws + 1.1)) < 0.011, "pass 1: onset and end are press and release minus the lag")
+	_tap_pass(tool, ws + 0.4 + lag, ws + 1.2 + lag)
+	check(tool.state == SongTapTool.State.PREVIEW and absf(tool.new_onset - (ws + 0.35)) < 0.012 and absf(tool.new_end - (ws + 1.15)) < 0.012, "two passes within 0.25 s are averaged (%.3f, %.3f)" % [tool.new_onset - ws, tool.new_end - ws])
+	# The preview: stops at the new pause_at for 0.7 s, plays the word, stops at its end.
+	var pause_at := tool.new_onset - 0.05
+	check(absf(tool.song_clock.get_position() - (tool.new_onset - SongTap.PREVIEW_LEAD)) < 0.02, "the preview starts 3 s before the new onset")
+	var guard := 0
+	while tool.preview != SongTapTool.Preview.HOLD and guard < 5000:
+		tool.step(0.005)
+		guard += 1
+	check(tool.preview == SongTapTool.Preview.HOLD and absf(tool.song_clock.get_position() - pause_at) < 0.01 and not tool.song_clock.is_playing(), "the preview stops at the new pause_at")
+	tool.step(SongTap.PREVIEW_HOLD - 0.1)
+	check(tool.preview == SongTapTool.Preview.HOLD, "...and holds for 0.7 s")
+	tool.step(0.15)
+	check(tool.preview == SongTapTool.Preview.WORD and tool.song_clock.is_playing(), "...then plays the word")
+	tool.advance_until(tool.song_clock, tool.new_end)
+	check(tool.preview == SongTapTool.Preview.END and not tool.song_clock.is_playing() and absf(tool.song_clock.get_position() - tool.new_end) < 0.02, "...and stops at the word's end")
+	check(FileAccess.get_file_as_string(files["labels"]) == labels_text0 and not FileAccess.file_exists(files["labels"] + ".bak"), "nothing is saved before Enter")
+	var onset1 := tool.new_onset
+	var end1 := tool.new_end
+	# R redoes this blank; B at blank 1 goes back to the calibration.
+	_tap_key(tool, KEY_R)
+	check(tool.state == SongTapTool.State.PASS and tool.passes.is_empty() and tool.blank_index == 0, "R in the preview redoes the blank from the first pass")
+	_tap_pass(tool, ws + 0.3 + lag, ws + 1.1 + lag)
+	_tap_pass(tool, ws + 0.4 + lag, ws + 1.2 + lag)
+	tool.advance_until(tool.song_clock, tool.new_end)
+	check(tool.preview == SongTapTool.Preview.END, "the redone blank reaches its preview again")
+	_tap_key(tool, KEY_ENTER)
+	var after := SongLabels.parse(FileAccess.get_file_as_string(files["labels"]))
+	var before := SongLabels.parse(SongTap.with_outro(FileAccess.get_file_as_string(REAL_LABELS)))
+	var diff_count := 0
+	for i in before.size():
+		diff_count += 1 if after[i] != before[i] else 0
+	var l1 = after.filter(func(l): return l["kind"] == "blank" and int(l["n"]) == 1)[0]
+	check(diff_count >= 1 and diff_count <= 2 and absf(float(l1["start"]) - onset1) < 0.001 and absf(float(l1["end"]) - end1) < 0.001, "Enter keeps the blank: the labels file has the new [1] start and end (%d label(s) changed)" % diff_count)
+	check(FileAccess.file_exists(files["labels"] + ".bak") and tool.saved.size() == 1 and tool.saved[0] == 1 and tool.state == SongTapTool.State.PASS and tool.blank_index == 1, "...a .bak was made, and blank 2 is next")
+	var saved_json = JSON.parse_string(FileAccess.get_file_as_string(files["json"]))
+	check(absf(float(SongData.flat_blanks(saved_json)[0]["word_start"]) - onset1) < 0.001 and absf(float(SongData.flat_blanks(song)[0]["word_start"]) - onset1) < 0.001, "...the song JSON and the tool's own song have it too")
+
+	# Blank 2: two onsets 0.5 s apart need a third pass; the median is taken.
+	var ws2 := float(SongData.flat_blanks(song)[1]["word_start"])
+	_tap_pass(tool, ws2 + 0.1 + lag, ws2 + 0.9 + lag)
+	_tap_pass(tool, ws2 + 0.6 + lag, ws2 + 1.4 + lag)
+	check(tool.state == SongTapTool.State.PASS and tool.passes.size() == 2, "onsets 0.5 s apart: a third pass")
+	_tap_pass(tool, ws2 + 0.2 + lag, ws2 + 1.0 + lag)
+	check(tool.state == SongTapTool.State.PREVIEW and absf(tool.new_onset - (ws2 + 0.2)) < 0.012 and absf(tool.new_end - (ws2 + 1.0)) < 0.012, "...and the median of the three is taken (%.3f)" % (tool.new_onset - ws2))
+	# B goes back one blank.
+	_tap_key(tool, KEY_B)
+	check(tool.state == SongTapTool.State.PASS and tool.blank_index == 0 and tool.passes.is_empty(), "B goes back one blank")
+	# No press by 4 s after the word_start replays the pass.
+	var ws1 := float(SongData.flat_blanks(song)[0]["word_start"])
+	guard = 0
+	while not tool.message.contains("No press") and guard < 5000:
+		tool.step(0.005)
+		guard += 1
+	check(tool.state == SongTapTool.State.PASS and tool.passes.is_empty() and absf(tool.song_clock.get_position() - (ws1 - SongTap.LEAD_IN)) < 0.03 and tool.message_is_error and tool.song_clock.is_playing(), "no press 4 s after the word: the pass replays")
+	# A press that is released at once is not a measurement.
+	tool.advance_until(tool.song_clock, ws1 - 1.0)
+	tool.handle_key(KEY_SPACE, true)
+	tool.handle_key(KEY_SPACE, false)
+	check(tool.passes.is_empty() and tool.state == SongTapTool.State.PASS and tool.message.contains("at once"), "a tap shorter than 0.05 s is replayed, not measured")
+	# B at blank 1 returns to the calibration, which keeps its lag.
+	_tap_key(tool, KEY_B)
+	check(tool.state == SongTapTool.State.CAL_DONE and absf(tool.lag - lag) < 0.001, "B at blank 1 goes back to the calibration")
+	tool.queue_free()
+	await _frames(2)
+
+	# A labels file that does not apply stops the tool at the start, with the problem on screen.
+	var bad := _tap_files("1.0\t2.0\tnot the song\n")
+	var bad_song: Dictionary = SongData.load_file(bad["json"])
+	bad_song["labels"] = bad["labels"]
+	var bad_tool := SongTapTool.new()
+	bad_tool.setup(bad_song, bad["json"], SilentSongClock.new(), SilentSongClock.new(), true)
+	root.add_child(bad_tool)
+	await _frames(1)
+	check(bad_tool.state == SongTapTool.State.FAILED and bad_tool.message_is_error and bad_tool.message.contains("do not apply"), "labels that do not apply: the tool stops and says why")
+	bad_tool.handle_key(KEY_ENTER, true)
+	check(bad_tool.state == SongTapTool.State.FAILED, "...and Enter does nothing")
+	bad_tool.queue_free()
+	await _frames(2)
+	check(_real_song_md5s() == md5_before, "the tap tool tests left the real labels file and song JSON byte-identical")
+
+
+func _key_event(code: int, pressed: bool, physical_only := false, echo := false) -> InputEventKey:
+	var e := InputEventKey.new()
+	e.physical_keycode = code
+	e.keycode = KEY_NONE if physical_only else code
+	e.pressed = pressed
+	e.echo = echo
+	return e
+
+
+## Real key events through Input.parse_input_event with the tool's UI up (and a focused Button
+## that would take Space as ui_accept), not handle_key.
+func _test_tap_tool_input() -> void:
+	print("Build 4c-b: tap tool keys through the input pipeline")
+	var md5_before := _real_song_md5s()
+	var files := _tap_files()
+	var song: Dictionary = SongData.load_file(files["json"])
+	song["labels"] = files["labels"]
+	var tool := SongTapTool.new()
+	tool.setup(song, files["json"], SilentSongClock.new(), SilentSongClock.new(), true)
+	var button := Button.new()
+	var button_pressed := [0]
+	button.pressed.connect(func(): button_pressed[0] += 1)
+	root.add_child(button)
+	root.add_child(tool)
+	button.grab_focus()
+	await _frames(2)
+	var layers := tool.find_children("*", "CanvasLayer", true, false)
+	check(layers.size() == 1 and layers[0].visible and tool.find_children("*", "Label", true, false).size() >= 8, "the tool's real UI is up")
+	check(root.gui_get_focus_owner() == null, "the tool leaves no Control holding focus")
+	button.grab_focus()
+	Input.parse_input_event(_key_event(KEY_SPACE, true))
+	await _frames(1)
+	check(tool._space_held and tool._space_presses == 1 and tool._hold_label.text == "SPACE: HELD", "Space through parse_input_event registers and the indicator lights")
+	Input.parse_input_event(_key_event(KEY_SPACE, true, false, true))
+	await _frames(1)
+	check(tool._space_presses == 1, "an echo (key repeat) is ignored")
+	Input.parse_input_event(_key_event(KEY_SPACE, false))
+	await _frames(1)
+	check(not tool._space_held and tool._hold_label.text == "SPACE: up" and button_pressed[0] == 0 and root.gui_get_focus_owner() == null, "release puts the indicator out; a focused Button never got Space as ui_accept")
+
+	# Calibration, every key an event: Enter, then Space on each click 0.1 s late.
+	Input.parse_input_event(_key_event(KEY_ENTER, true))
+	Input.parse_input_event(_key_event(KEY_ENTER, false))
+	await _frames(1)
+	check(tool.state == SongTapTool.State.CAL_PLAY, "Enter (an event) starts the clicks")
+	var first := true
+	for c in SongTap.click_times():
+		tool.advance_until(tool.click_clock, c + 0.1)
+		Input.parse_input_event(_key_event(KEY_SPACE, true, first))  # the first tap by its physical key only
+		first = false
+		await _frames(1)
+		Input.parse_input_event(_key_event(KEY_SPACE, false))
+		await _frames(1)
+	check(tool._taps.size() == SongTap.CLICK_COUNT and tool._tap_log.size() == SongTap.CLICK_COUNT and tool._tap_log[0].contains("click 1:  +1"), "each calibration tap is listed with its offset in ms (%s)" % (tool._tap_log[0] if not tool._tap_log.is_empty() else "none"))
+	tool.advance_until(tool.click_clock, SongTap.click_track_end() + 0.05)
+	check(tool.state == SongTapTool.State.CAL_DONE and absf(tool.lag - 0.1) < 0.011, "the calibration measures the lag from the events (%.3f s)" % tool.lag)
+	Input.parse_input_event(_key_event(KEY_ENTER, true))
+	Input.parse_input_event(_key_event(KEY_ENTER, false))
+	await _frames(1)
+	check(tool.state == SongTapTool.State.PASS, "Enter accepts the lag")
+
+	# A pass: the 3-2-1 cue, the highlighted word, and a hold measured from the events.
+	var b: Dictionary = SongData.flat_blanks(song)[0]
+	var ws := float(b["word_start"])
+	check(tool._line_rich.text.contains("[u]" + str(b["answer"]) + "[/u]") and not tool._line_rich.text.contains(SongData.BLANK_MARK), "the lyric line is shown with the blank word highlighted")
+	tool.advance_until(tool.song_clock, ws - 2.5)
+	check(tool._cue_label.text == "3", "the cue reads 3 two and a half seconds before the word (%s)" % tool._cue_label.text)
+	tool.advance_until(tool.song_clock, ws - 1.5)
+	check(tool._cue_label.text == "2", "...then 2")
+	tool.advance_until(tool.song_clock, ws - 0.5)
+	check(tool._cue_label.text == "1", "...then 1")
+	tool.advance_until(tool.song_clock, ws + 0.3 + tool.lag)
+	check(tool._cue_label.text.begins_with("NOW"), "...then the cue to hold")
+	Input.parse_input_event(_key_event(KEY_SPACE, true))
+	await _frames(1)
+	check(tool._held and tool._hold_label.text == "SPACE: HELD", "Space held in a pass: held, indicator lit")
+	tool.advance_until(tool.song_clock, ws + 1.1 + tool.lag)
+	Input.parse_input_event(_key_event(KEY_SPACE, false))
+	await _frames(1)
+	check(tool.passes.size() == 1 and absf(tool.passes[0]["onset"] - (ws + 0.3)) < 0.02 and absf(tool.passes[0]["end"] - (ws + 1.1)) < 0.02, "the hold gives a pass (onset %.3f, end %.3f)" % [tool.passes[0]["onset"] - ws, tool.passes[0]["end"] - ws])
+
+	# Warnings are on screen.
+	tool._say("test warning", true)
+	check(tool._warning_label.text.contains("test warning"), "a warning is shown on screen, not only in the console")
+	tool.queue_free()
+	button.queue_free()
+	await _frames(2)
+	check(_real_song_md5s() == md5_before, "the input tests left the real labels file and song JSON byte-identical")
+
+
+func _test_mark_song_args() -> void:
+	print("Build 4c-b: --mark-song")
+	var WorldScript = load("res://scripts/world.gd")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--mark-song", "eunju"]))["mark_song"] == "eunju" and WorldScript.parse_launch_args(PackedStringArray())["mark_song"] == "", "--mark-song <boss> is parsed")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--mark-song"]))["mark_song"] == "" and WorldScript.parse_launch_args(PackedStringArray(["--mark-song", "--new-game"]))["mark_song"] == "", "--mark-song with no boss is ignored")
+	check(GameStateScript.resolve_save_path(PackedStringArray(["--mark-song", "eunju"])) == GameStateScript.SANDBOX_PATH, "--mark-song forces the sandbox save")
+	var song := {"audio": "res://audio/songs/dalnim_boram.mp3"}
+	check(WorldScript.tap_tool_blocker(song, true, PackedStringArray(["--mark-song", "eunju"]), "windows") == "", "--mark-song runs with audio, a real display and a track")
+	check(WorldScript.tap_tool_blocker(song, true, PackedStringArray(["--mark-song", "eunju", "--no-audio"]), "windows").contains("--no-audio"), "--mark-song --no-audio: refused, with the reason")
+	check(WorldScript.tap_tool_blocker(song, true, PackedStringArray(["--mark-song", "eunju"]), "headless") != "", "--mark-song on the headless display: refused, with a reason")
+	check(WorldScript.tap_tool_blocker({}, true, PackedStringArray(["--mark-song", "eunju"]), "windows") != "" and WorldScript.tap_tool_blocker(song, false, PackedStringArray(["--mark-song", "eunju"]), "windows") != "", "--mark-song with no track, or with fight_audio off: refused")
+
+
+## Build 4d: the scream picker (random, never twice in a row, seeded, list or single string, bad paths).
+func _test_scream_picks() -> void:
+	print("Build 4d: scream picks")
+	var good: Array = ["res://audio/sfx/scream1.mp3", "res://audio/sfx/scream2.mp3", "res://audio/sfx/scream3.mp3"]
+	for p in good:
+		check(ResourceLoader.exists(p) and load(p) is AudioStream, "%s loads as an audio stream" % p)
+	var seqs := []
+	for run in 2:
+		_fresh_fight_state()
+		var f := _make_fight()
+		await _frames(1)
+		var seq: Array[String] = []
+		for i in 100:
+			seq.append(f.pick_scream())
+		var used := {}
+		var ok := true
+		for i in seq.size():
+			used[seq[i]] = true
+			ok = ok and seq[i] in good and (i == 0 or seq[i] != seq[i - 1])
+		check(ok and used.size() == 3, "100 picks: only listed files, never the same twice in a row, all three used")
+		seqs.append(seq)
+		if run == 0:
+			f.registry._sfx = {"wrong_scream": "res://audio/sfx/scream2.mp3"}
+			f._scream_streams.clear()
+			check(f.registry.sfx_list("wrong_scream") == ["res://audio/sfx/scream2.mp3"] and f.pick_scream() == good[1] and f.pick_scream() == good[1], "a single-string registry entry still works (and repeats)")
+			f.registry._sfx = {"wrong_scream": ["res://audio/sfx/missing.mp3", good[0], good[2]]}
+			f._scream_streams.clear()
+			var got := {}
+			for i in 30:
+				got[f.pick_scream()] = true
+			check(got.size() == 2 and got.has(good[0]) and got.has(good[2]), "one bad path: the others are still used")
+			f.registry._sfx = {"wrong_scream": ["res://audio/sfx/missing.mp3", "res://audio/sfx/missing2.mp3"]}
+			f._scream_streams.clear()
+			check(f.pick_scream() == "", "all bad: no pick (the [SCREAM] label shows)")
+		f.queue_free()
+		await _frames(2)
+	check(seqs[0] == seqs[1], "the same seed gives the same scream sequence")

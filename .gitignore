@@ -13,5 +13,7 @@ Thumbs.db
 audio/**/*.wip.*
 
 # Capture PNGs (written by the --capture-* modes)
-tests/shots/*
-!tests/shots/.gdignore
+tests/shots/
+
+# Audition backups (the label file's .bak is next to the song JSON)
+data/songs/*.bak

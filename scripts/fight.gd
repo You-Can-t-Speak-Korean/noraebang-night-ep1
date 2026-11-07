@@ -8,6 +8,15 @@
 #   frantic, and a blank's blackout) come from the song file, but only play when
 #   tuning.json's fight_lighting_effects is true (default false: normal light throughout).
 #   After a survival win the boss's line and her taunts play, then the end card.
+#   The song file's times come from an Audacity label file (SongLabels). A blank freezes the
+#   song at its pause_at. A right answer lets it run on from there (the blank word plays, the
+#   counter beat runs over the music); a wrong answer or a timeout seeks to the word's end,
+#   plays on, and the scream plays over it (a [SCREAM] label if none of the sfx files loads).
+#   Lines with "show": false (the spoken intro and outro) are in the audio, not on the panel.
+#   World applies the song's label file in memory when the fight starts (SongLabels.load_and_apply);
+#   if it does not apply, the baked times stay and labels_error is shown in red.
+#   --check-song (check_mode): the label audition. Wrong answers cost nothing, the countdown
+#   holds, and keys nudge the blank word's timing (see _audition_input).
 #   World starts it (--fight <boss>, or resuming a saved fight); the tests and the
 #   capture mode drive it with step() and pick_*().
 #
@@ -43,6 +52,11 @@ const FRANTIC_COLOR := Color(1.0, 0.2, 0.15)
 const CROSS_KEY := KEY_X
 const HINT_CROSS := "X or click the eyes: cross out a wrong option, costs 1 nunchi [placeholder]"
 const HINT_NO_NUNCHI := "No nunchi left to cross out [placeholder]"
+const SCREAM_LABEL_TIME := 1.0
+## Seconds the lyric panel takes to scroll to the next line, ending as it starts.
+const SCROLL_TIME := 0.4
+const AUDITION_REPLAY_LEAD := 2.0
+const AUDITION_JUMP_LEAD := 3.0
 const HINT_USED := "Already crossed out on this blank [placeholder]"
 
 ## "", "right", "wrong", "mixed" (wrong on every third blank) or "cross" (a cross-out on
@@ -74,6 +88,15 @@ var lighting := "normal"
 ## tuning.json's fight_lighting_effects. False: the song's lighting data is ignored and
 ## the lights stay normal (as in phase 1) all fight.
 var lighting_effects := false
+## The label audition (--check-song): see the header. `song_path` is the song's JSON file.
+var check_mode := false
+var song_path := ""
+var audition: SongAudition
+## Set by World before setup(): why the song's label file could not be applied at load (the song then
+## keeps its baked times). Shown on screen in red; "" when the labels were applied or there are none.
+var labels_error := ""
+## How many wrong answers have been screamed at (sound or label).
+var screams := 0
 ## After a survival win: the lines to play, [{"speaker", "text", "card"}], and the one showing.
 var aftermath: Array[Dictionary] = []
 var aftermath_index := -1
@@ -113,6 +136,20 @@ var _light_time := 0.0
 var _shake_left := 0.0
 var _shake_strength := 0.0
 var _loaded_label: Label
+var _scream_label: Label
+var _scream_left := 0.0
+var _scream_player: AudioStreamPlayer
+var last_scream_path := ""
+var _scream_streams := {}
+var _scream_prev := ""
+var _scream_rng: RandomNumberGenerator
+var _check_label: Label
+var _labels_error_label: Label
+var _check_note := ""
+var _check_note_left := 0.0
+## Per song line: its row on the panel (a hidden line shares its neighbour's), and its label.
+var _row_of: Array[int] = []
+var _label_of: Dictionary = {}
 var _cross_hint: Label
 var _after_panel: Panel
 var _after_speaker: Label
@@ -137,13 +174,23 @@ func _ready() -> void:
 		clock = SilentSongClock.new()
 	var cfg: Dictionary = TuningScript.fight_config()
 	lighting_effects = cfg["lighting_effects"]
-	logic = FightLogic.new(song, _seed, GameState, cfg["wrong_halves"])
+	logic = FightLogic.new(song, _seed, GameState, 0 if check_mode else int(cfg["wrong_halves"]))
+	clock.mount(self)
 	GameState.fight_lost.connect(func(): lost_signals += 1)
 	_build_set()
 	_build_ui()
 	_build_lines()
+	if check_mode:
+		audition = SongAudition.new(song, str(song.get("labels", "")), song_path)
+		if not audition.has_labels():
+			push_error("Fight: --check-song needs the song's label file (%s)" % song.get("labels", ""))
 	start_song()
 	set_process(not manual)
+
+
+func _exit_tree() -> void:
+	if clock != null:
+		clock.stop()
 
 
 func _process(delta: float) -> void:
@@ -162,6 +209,8 @@ func start_song() -> void:
 	_banner.text = ""
 	_loaded_label.visible = false
 	_cross_hint.visible = false
+	_scream_label.visible = false
+	_scream_left = 0.0
 	_after_panel.visible = false
 	aftermath = []
 	aftermath_index = -1
@@ -180,14 +229,15 @@ func step(delta: float) -> void:
 		State.PLAYING:
 			clock.tick(delta)
 			_update_scroll()
-			if logic.has_blank() and clock.get_position() >= float(logic.current()["time"]):
-				clock.seek(float(logic.current()["time"]))
+			var due := _song_event_due()
+			if due == 1:
 				_enter_freeze()
-			elif not logic.has_blank() and clock.get_position() >= float(song["length"]):
+			elif due == 2:
 				_finish_song()
 		State.FREEZE:
 			_freeze_time += delta
-			freeze_left = maxf(freeze_left - delta, 0.0)
+			if not check_mode:  # the audition holds the countdown while the timing is nudged
+				freeze_left = maxf(freeze_left - delta, 0.0)
 			_update_attack(1.0 - freeze_left / float(song["countdown"]))
 			_update_timer()
 			if auto_mode != "" and _freeze_time >= AUTO_DELAY:
@@ -195,20 +245,50 @@ func step(delta: float) -> void:
 			elif freeze_left <= 0.0:
 				_resolve("")
 		State.BEAT:
+			# The song plays on under the beat; the next freeze or the end cuts the beat short.
+			clock.tick(delta)
+			_update_scroll()
 			_beat_left -= delta
 			_animate_beat(1.0 - maxf(_beat_left, 0.0) / BEAT_TIME)
-			if _beat_left <= 0.0:
+			if _beat_left <= 0.0 or _song_event_due() != 0:
 				_after_beat()
 		State.RESULT:
+			_run_song_out(delta)
 			_result_time += delta
 			if auto_mode != "" and _result_time >= AUTO_RESULT_DELAY:
 				_advance_result()
 		State.AFTERMATH:
+			_run_song_out(delta)
 			_result_time += delta
 			if auto_mode != "" and _result_time >= AUTO_RESULT_DELAY:
 				_next_aftermath()
+		State.END:
+			_run_song_out(delta)
 	_update_shake(delta)
 	_update_lighting(delta)
+	if _scream_left > 0.0:
+		_scream_left -= delta
+		_scream_label.visible = _scream_left > 0.0
+	if check_mode:
+		_update_check_label(delta)
+
+
+## 1 when the song has reached the next blank's pause, 2 when it has reached its end, else 0.
+func _song_event_due() -> int:
+	var t := clock.get_position()
+	if logic.has_blank():
+		return 1 if t >= float(logic.current()["time"]) else 0
+	return 2 if t >= results_time() else 0
+
+
+## When the results appear: the end of the last sung lyric line (the spoken outro and the
+## instrumental tail play on under the results). The song's length if no line has an end.
+func results_time() -> float:
+	var t := 0.0
+	for l in song["lines"]:
+		if str(l.get("kind", "lyric")) == "lyric" and l.has("end"):
+			t = maxf(t, float(l["end"]))
+	return t if t > 0.0 else float(song["length"])
 
 
 # ── Input ──────────────────────────────────────────────────────────────
@@ -217,6 +297,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_echo():
 		return
 	var clicked: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
+	if check_mode and _audition_input(event):
+		return
 	match state:
 		State.FREEZE:
 			if event.is_action_pressed("ui_up"):
@@ -339,12 +421,132 @@ func finish_beat(dt := 0.05) -> void:
 		guard += 1
 
 
+# ── The audition (--check-song) ───────────────────────────────────────
+
+## Keys, only in check mode. During a freeze: Left/Right nudge the blank word's start,
+## Comma/Period its end (0.01 s, Shift 0.05 s); P replays from 2 s before the pause and
+## freezes again; Ctrl+S saves. Anywhere: N / B jump to 3 s before the next / previous
+## blank's pause. True when the key was used.
+func _audition_input(event: InputEvent) -> bool:
+	if not (event is InputEventKey and event.pressed) or audition == null:
+		return false
+	var step_size: float = SongAudition.BIG_STEP if event.shift_pressed else SongAudition.STEP
+	var k: int = event.keycode
+	if k == KEY_N or k == KEY_B:
+		if state == State.PLAYING or state == State.FREEZE or state == State.BEAT:
+			var target := logic.index - 1
+			if k == KEY_N:
+				target = logic.index + (1 if state == State.FREEZE else 0)
+			audition_jump(target)
+		return true
+	if state != State.FREEZE:
+		return false
+	match k:
+		KEY_LEFT, KEY_RIGHT, KEY_COMMA, KEY_PERIOD:
+			var dir := 1.0 if (k == KEY_RIGHT or k == KEY_PERIOD) else -1.0
+			audition_nudge("start" if (k == KEY_LEFT or k == KEY_RIGHT) else "end", dir * step_size)
+			return true
+		KEY_P:
+			audition_replay()
+			return true
+		KEY_S:
+			if event.ctrl_pressed or event.meta_pressed:
+				audition_save()
+				return true
+	return false
+
+
+func audition_nudge(which: String, delta: float) -> void:
+	if audition == null or not logic.has_blank():
+		return
+	var errors := audition.nudge(int(logic.current()["n"]), which, delta)
+	logic.sync_timing()
+	_set_check_note("; ".join(errors) if not errors.is_empty() else "")
+
+
+func audition_save() -> void:
+	if audition == null:
+		return
+	var errors := audition.save()
+	_set_check_note("SAVE FAILED: %s" % "; ".join(errors) if not errors.is_empty() else "Saved (labels + song JSON; backup: .bak)")
+
+
+## From 2 s before this blank's pause, freezing at it again.
+func audition_replay() -> void:
+	if state != State.FREEZE:
+		return
+	var at := float(logic.current()["time"])
+	_leave_freeze()
+	clock.seek(maxf(at - AUDITION_REPLAY_LEAD, 0.0))
+	clock.resume()
+
+
+## To 3 s before blank `target` (0-based, clamped) with its answer forgotten.
+func audition_jump(target: int) -> void:
+	_leave_freeze()
+	_banner.text = ""
+	_loaded_label.visible = false
+	_beat_left = 0.0
+	logic.rewind_to(clampi(target, 0, logic.total() - 1))
+	for i in song["lines"].size():
+		_line_texts[i] = _display_text(i)
+	state = State.PLAYING
+	clock.seek(maxf(float(logic.current()["time"]) - AUDITION_JUMP_LEAD, 0.0))
+	clock.resume()
+
+
+## Back to playing from a freeze (or a beat): the options, timer and attack go away.
+func _leave_freeze() -> void:
+	_option_box.visible = false
+	_hide_timer()
+	_cross_hint.visible = false
+	_light_override = ""
+	_clear_attack()
+	state = State.PLAYING
+	for i in song["lines"].size():
+		if logic.has_blank() and i == _line_of(logic.current()):
+			_line_texts[i] = _display_text(i)
+	_apply_line_texts()
+
+
+func _set_check_note(text: String) -> void:
+	_check_note = text
+	_check_note_left = 4.0
+
+
+func _update_check_label(delta: float) -> void:
+	_check_note_left = maxf(_check_note_left - delta, 0.0)
+	var lines: Array[String] = ["CHECK-SONG [placeholder]"]
+	if audition != null and logic.has_blank():
+		var n := int(logic.current()["n"])
+		var info := audition.info(n)
+		lines.append("blank %d of %d" % [n, logic.total()])
+		lines.append("word_start %.2f" % info["word_start"])
+		lines.append("word_end   %.2f (%s)" % [info["word_end"], "marked" if info["marked"] else "default"])
+		lines.append("pause_at   %.2f" % info["pause_at"])
+	if audition != null and audition.unsaved:
+		lines.append("UNSAVED")
+	lines.append("time %.2f" % clock.get_position())
+	lines.append("")
+	lines.append("Left/Right: word_start -/+ 0.01")
+	lines.append("Comma/Period: word_end -/+ 0.01")
+	lines.append("Shift: 0.05 steps")
+	lines.append("P: replay from 2 s before")
+	lines.append("N / B: next / previous blank")
+	lines.append("Ctrl+S: save")
+	if _check_note_left > 0.0 and _check_note != "":
+		lines.append("")
+		lines.append(_check_note)
+	_check_label.text = "
+".join(lines)
+
+
 # ── The freeze ─────────────────────────────────────────────────────────
 
 func _enter_freeze() -> void:
-	clock.pause()
-	state = State.FREEZE
 	var blank := logic.current()
+	clock.hold_at(float(blank["time"]))
+	state = State.FREEZE
 	options = logic.options_for(blank)
 	selected = 0
 	_freeze_time = 0.0
@@ -375,6 +577,11 @@ func _resolve(picked: String) -> void:
 	last_result = res
 	state = State.BEAT
 	_beat_left = BEAT_TIME
+	# The song runs on at once: from the freeze for a right answer, from the end of the
+	# blank word for a wrong one (its word is never heard).
+	if not res["right"] and blank.has("word_end"):
+		clock.seek(float(blank["word_end"]))
+	clock.resume()
 	_attack_back = res["right"]
 	_attack_from_x = _attack.position.x if _attack != null else ATTACKER_X
 	var idx := _line_of(blank)
@@ -393,6 +600,7 @@ func _resolve(picked: String) -> void:
 		_banner.modulate = Color(1.0, 0.45, 0.45)
 		_burst(_boram_pos + Vector3(0, 1.1, 0), 80, 1.0)
 		_flash()
+		_scream()
 		if res["loaded"]:
 			_loaded_flourish(str(res["card"]))
 	_animate_beat(0.0)
@@ -414,13 +622,62 @@ func _after_beat() -> void:
 		_show_game_over()
 		return
 	state = State.PLAYING
-	clock.resume()
+
+
+## Boram's scream over the music: one of the loadable files in `sfx.wrong_scream`, played on its own
+## player (an earlier scream still going is cut off); with none that loads, a [SCREAM] label for a second.
+## The sound only plays on an audio clock; `last_scream_path` records the pick either way.
+func _scream() -> void:
+	screams += 1
+	var path := pick_scream()
+	if path != "":
+		last_scream_path = path
+		if clock.has_audio():
+			_scream_player.stop()
+			_scream_player.stream = _scream_streams[path]
+			_scream_player.play()
+		return
+	last_scream_path = ""
+	_scream_label.visible = true
+	_scream_left = SCREAM_LABEL_TIME
+
+
+## The next scream file: random among the files that load, never the one before (unless it is the only one),
+## from an RNG that follows --seed. "" when none loads.
+func pick_scream() -> String:
+	var ok: Array[String] = []
+	for p in registry.sfx_list("wrong_scream"):
+		if not _scream_streams.has(p):
+			var st = load(p) if ResourceLoader.exists(p) else null
+			_scream_streams[p] = st if st is AudioStream else null
+		if _scream_streams[p] != null:
+			ok.append(p)
+	if ok.is_empty():
+		return ""
+	var pool := ok
+	if ok.size() > 1:
+		pool = ok.filter(func(p): return p != _scream_prev)
+	if _scream_rng == null:
+		_scream_rng = RandomNumberGenerator.new()
+		_scream_rng.seed = _seed + 13
+	_scream_prev = pool[_scream_rng.randi() % pool.size()]
+	return _scream_prev
 
 
 # ── Ending ─────────────────────────────────────────────────────────────
 
+## After the results the track plays on to its end (never blocks anything). A silent clock
+## stops itself at the song's length; an audio clock runs to the end of its stream and holds
+## there. Game over and retry stop it elsewhere.
+func _run_song_out(delta: float) -> void:
+	if not clock.is_playing():
+		return
+	clock.tick(delta)
+	if clock.stops_at_length() and clock.get_position() >= float(song["length"]):
+		clock.pause()
+
+
 func _finish_song() -> void:
-	clock.pause()
 	var result := logic.finish()
 	if result.is_empty():
 		push_error("Fight: song ended with blanks unanswered or no hearts")
@@ -510,7 +767,8 @@ func _show_end() -> void:
 func _show_game_over() -> void:
 	state = State.GAME_OVER
 	card_kind = "gameover"
-	clock.pause()
+	clock.stop()
+	_scream_player.stop()
 	_card_splats.visible = false
 	_card_bg.color = Color(0, 0, 0, 1)
 	_card_title.text = str(song["game_over"].get("anchor", ""))
@@ -846,6 +1104,35 @@ func _build_ui() -> void:
 	_loaded_label.visible = false
 	ui.add_child(_loaded_label)
 
+	_scream_label = _label("[SCREAM]", 72)
+	_scream_label.position = Vector2(210, 560)
+	_scream_label.size = Vector2(1500, 90)
+	_scream_label.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
+	_scream_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_scream_label.add_theme_constant_override("outline_size", 16)
+	_scream_label.visible = false
+	ui.add_child(_scream_label)
+	_scream_player = AudioStreamPlayer.new()
+	_scream_player.name = "ScreamSfx"
+	_scream_player.bus = "Master"
+	add_child(_scream_player)
+	_check_label = _label("", 22, HORIZONTAL_ALIGNMENT_LEFT)
+	_check_label.position = Vector2(1330, 140)
+	_check_label.size = Vector2(560, 420)
+	_check_label.add_theme_color_override("font_color", Color(0.7, 1.0, 0.8))
+	_check_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_check_label.add_theme_constant_override("outline_size", 6)
+	_check_label.visible = check_mode
+	ui.add_child(_check_label)
+	_labels_error_label = _label("LABELS NOT APPLIED: %s" % labels_error, 26, HORIZONTAL_ALIGNMENT_LEFT)
+	_labels_error_label.position = Vector2(40, 900)
+	_labels_error_label.size = Vector2(1840, 160)
+	_labels_error_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_labels_error_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3))
+	_labels_error_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_labels_error_label.add_theme_constant_override("outline_size", 8)
+	_labels_error_label.visible = labels_error != ""
+	ui.add_child(_labels_error_label)
 	_timer_bar_bg = ColorRect.new()
 	_timer_bar_bg.color = Color(0, 0, 0, 0.6)
 	_timer_bar_bg.position = Vector2(610, 96)
@@ -963,14 +1250,26 @@ func _scatter_splats() -> void:
 
 
 func _build_lines() -> void:
-	for i in song["lines"].size():
+	var rows := 0
+	var lines: Array = song["lines"]
+	for i in lines.size():
+		var shown: bool = lines[i].get("show", true)
+		_row_of.append(mini(rows, maxi(_count_shown() - 1, 0)))
 		var l := _label("", 40)
-		l.position = Vector2(0, i * LINE_H)
+		l.position = Vector2(0, _row_of[i] * LINE_H)
 		l.size = Vector2(CLIP_SIZE.x, LINE_H)
 		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		l.visible = shown
 		_lyric_col.add_child(l)
 		_line_labels.append(l)
 		_line_texts.append("")
+		if shown:
+			rows += 1
+
+
+## How many of the song's lines the panel draws (the spoken intro and outro have show: false).
+func _count_shown() -> int:
+	return song["lines"].filter(func(l): return l.get("show", true)).size()
 
 
 ## The line as shown: the blank as `fill` (default "___"), spoken lines with their speaker.
@@ -1003,11 +1302,17 @@ func _update_scroll() -> void:
 		if float(lines[i]["time"]) <= t:
 			f = float(i)
 			if i + 1 < lines.size():
-				var span := float(lines[i + 1]["time"]) - float(lines[i]["time"])
-				f += clampf((t - float(lines[i]["time"])) / maxf(span, 0.001), 0.0, 1.0)
-	_lyric_col.position.y = LINE_H - f * LINE_H
+				# A line stays put until the next one is close, then the panel scrolls over
+				# SCROLL_TIME (real line gaps are long; a blank freezes mid-line).
+				var next_time := float(lines[i + 1]["time"])
+				f += clampf((t - (next_time - SCROLL_TIME)) / SCROLL_TIME, 0.0, 1.0)
+	# f is a (fractional) line number; the panel scrolls by rows, and a hidden line shares a
+	# row with its neighbour.
+	var at := mini(int(f), lines.size() - 1)
+	var row_f := lerpf(float(_row_of[at]), float(_row_of[mini(at + 1, lines.size() - 1)]), f - float(at))
+	_lyric_col.position.y = LINE_H - row_f * LINE_H
 	for i in _line_labels.size():
-		var d := absf(float(i) - f)
+		var d := absf(float(_row_of[i]) - row_f)
 		_line_labels[i].modulate = Color(1.0, 0.95, 0.5, 1.0) if d < 0.5 else Color(0.75, 0.8, 0.95, clampf(1.0 - d * 0.5, 0.15, 0.8))
 	_apply_line_texts()
 
