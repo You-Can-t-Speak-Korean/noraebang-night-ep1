@@ -14,9 +14,10 @@ signal secret_lost(card: String, by: String)
 signal player_died
 signal fight_lost
 signal state_reset
+signal inventory_changed
 
 const STATE_VERSION := "0.4"
-const SAVE_VERSION := 1
+const SAVE_VERSION := 2
 const GAME_ID := "noraebang-night"
 const OUTCOMES: Array[String] = ["revenge", "survival"]
 
@@ -58,7 +59,15 @@ var spawn_seed: int = 0
 var map_day: String = DEFAULT_MAP_DAY  # "sat" | "mon"; picks the day's spot budget
 ## "<map>:<day>" -> Array[String] of "<spot_id>:<kind>" (kind: ddeok, note, health, trap, empty).
 var collected: Dictionary = {}
+## The notes kept in the notebook, in page order (one per page). Empty without a notebook.
 var notes: Array[String] = []
+## Containers and what is in them (see Inventory). Starts empty: Boram owns no bag and no notebook.
+var inventory: Dictionary = Inventory.empty()
+## Notes thrown away (던져버린다) or left lying when the day changed: never dealt again in this save.
+var destroyed_notes: Array[String] = []
+## Items put down from the inventory: [{"kind": "item" | "note", "id", "room", "x"}]. They vanish
+## when Boram leaves the map (leave_map).
+var dropped: Array = []
 var talked: Array[String] = []
 var owned_items: Array[String] = []
 var scores: Dictionary = {}            # boss -> int (best)
@@ -67,7 +76,14 @@ var progress: String = ""
 var codex: Array[String] = []
 var current_boss: String = ""
 var in_fight: bool = false
-var fight_snapshot: Dictionary = {}    # {"hearts_halves": int, "nunchi": int}
+var fight_snapshot: Dictionary = {}    # {"hearts_halves": int, "nunchi": int, "inventory": Dictionary, "notes": Array}
+## Items the last end_fight handed over (ids), for the result card. Not saved.
+var last_rewards: Array[String] = []
+
+# ── Settings (not saved with the game; user://settings.cfg) ────────────
+var settings_path: String = Settings.PATH
+## "lowest_first" (bandage until none are left, then red medicine) or "highest_first".
+var quick_heal_order: String = Settings.DEFAULT_HEAL_ORDER
 
 ## Where save_game()/load_game() read and write. Tests override this.
 var save_path: String = SAVE_PATH
@@ -75,6 +91,8 @@ var save_path: String = SAVE_PATH
 
 func _ready() -> void:
 	save_path = resolve_save_path(OS.get_cmdline_user_args(), OS.get_cmdline_args())
+	settings_path = Settings.SANDBOX_PATH if wants_sandbox(OS.get_cmdline_user_args(), OS.get_cmdline_args()) else Settings.PATH
+	quick_heal_order = Settings.load_heal_order(settings_path)
 	load_data()
 	new_game()
 
@@ -258,7 +276,8 @@ func set_boss(id: String) -> void:
 func begin_fight(boss_id: String) -> void:
 	current_boss = boss_id
 	in_fight = true
-	fight_snapshot = {"hearts_halves": hearts_halves, "nunchi": nunchi}
+	fight_snapshot = {"hearts_halves": hearts_halves, "nunchi": nunchi,
+			"inventory": inventory.duplicate(true), "notes": notes.duplicate()}
 
 
 func retry_fight() -> bool:
@@ -267,6 +286,10 @@ func retry_fight() -> bool:
 		return false
 	hearts_halves = int(fight_snapshot["hearts_halves"])
 	nunchi = int(fight_snapshot["nunchi"])
+	if fight_snapshot.has("inventory"):
+		inventory = Inventory.normalize(fight_snapshot["inventory"])
+		notes = _str_array(fight_snapshot.get("notes", []))
+		inventory_changed.emit()
 	hearts_changed.emit(hearts_halves)
 	nunchi_changed.emit(nunchi)
 	return true
@@ -284,6 +307,13 @@ func end_fight(boss_id: String, outcome: String, score: int) -> bool:
 		outcomes[boss_id] = outcome
 	if outcome == "revenge" and hearts_halves < hearts_max_halves:
 		heal(hearts_max_halves - hearts_halves)
+	last_rewards = []
+	for reward in Items.rewards(boss_id, outcome):
+		var unless: String = reward["unless_equipped_kind"]
+		if unless != "" and equipped_of_kind(unless) != "":
+			continue
+		if give_item(reward["item"]):
+			last_rewards.append(reward["item"])
 	return true
 
 
@@ -296,6 +326,138 @@ func add_note(id: String) -> void:
 
 func has_note(id: String) -> bool:
 	return notes.has(id)
+
+
+# ── Items ──────────────────────────────────────────────────────────────
+
+func has_bag() -> bool:
+	return Inventory.has_bag(inventory)
+
+
+func has_notebook() -> bool:
+	return Inventory.has_notebook(inventory)
+
+
+## The equipped item of this kind ("bag" or "notebook"), or "".
+func equipped_of_kind(kind: String) -> String:
+	match kind:
+		"bag":
+			return str(inventory["bag"])
+		"notebook":
+			return str(inventory["notebook"])
+	return ""
+
+
+## Hands over a container (see Inventory.give_result: equip, nest or upgrade) or stores a health
+## item. False when nothing changed (already carried, no room, unknown id). A swap needs a choice
+## of what to drop, so it is not done here (see Inventory.swap).
+func give_item(id: String) -> bool:
+	var done := false
+	if Items.is_heal(id):
+		done = Inventory.store(inventory, id) != ""
+	else:
+		done = Inventory.give(inventory, id)
+	if done:
+		inventory_changed.emit()
+	return done
+
+
+## Puts a health item in a container with room: the container's key ("bag" / "case"), or "" if none has.
+func store_heal(id: String) -> String:
+	var key := Inventory.store(inventory, id)
+	if key != "":
+		inventory_changed.emit()
+	return key
+
+
+func can_keep_note() -> bool:
+	return has_notebook() and notes.size() < Inventory.notebook_pages(inventory)
+
+
+## Writes a note on the next page. False if there is no notebook or no page left.
+func keep_note(id: String) -> bool:
+	if not can_keep_note() or notes.has(id):
+		return false
+	notes.append(id)
+	inventory_changed.emit()
+	return true
+
+
+## Takes a note off its page (the caller drops or destroys it).
+func remove_note(id: String) -> bool:
+	if not notes.has(id):
+		return false
+	notes.erase(id)
+	inventory_changed.emit()
+	return true
+
+
+## The note is destroyed and is never dealt again in this save.
+func destroy_note(id: String) -> void:
+	notes.erase(id)
+	if not destroyed_notes.has(id):
+		destroyed_notes.append(id)
+	inventory_changed.emit()
+
+
+## Takes one health item out of container `key` (to use it or put it down).
+func take_out_item(key: String, id: String) -> bool:
+	var ok := Inventory.remove_unit(inventory, key, id)
+	if ok:
+		inventory_changed.emit()
+	return ok
+
+
+## Heals by a health item's amount. False (and nothing happens) at full hearts or for a non-health id.
+func apply_heal_item(id: String) -> bool:
+	if not Items.is_heal(id) or hearts_halves >= hearts_max_halves:
+		return false
+	heal(Items.heal_halves(id))
+	return true
+
+
+## Uses one health item from any container, by quick_heal_order. {"result": "healed" | "full" | "none",
+## "item": id, "halves": int}: "full" = hearts were full (nothing used), "none" = nothing to use.
+func quick_heal() -> Dictionary:
+	if hearts_halves >= hearts_max_halves:
+		return {"result": "full"}
+	var best := {}
+	for e in Inventory.heal_entries(inventory):
+		var h := Items.heal_halves(e["id"])
+		if best.is_empty():
+			best = e
+		elif quick_heal_order == "highest_first" and h > Items.heal_halves(best["id"]):
+			best = e
+		elif quick_heal_order != "highest_first" and h < Items.heal_halves(best["id"]):
+			best = e
+	if best.is_empty():
+		return {"result": "none"}
+	take_out_item(best["key"], best["id"])
+	var halves := Items.heal_halves(best["id"])
+	heal(halves)
+	return {"result": "healed", "item": best["id"], "halves": halves}
+
+
+## Notes the spot dealer must not deal: kept, thrown away, or lying on the ground.
+func notes_unavailable() -> Array:
+	var out: Array = notes.duplicate()
+	for id in destroyed_notes:
+		if not out.has(id):
+			out.append(id)
+	for d in dropped:
+		if d.get("kind") == "note" and not out.has(d.get("id")):
+			out.append(d.get("id"))
+	return out
+
+
+## Boram leaves Map 01 (the day changes): what lies on the ground is gone for good.
+func leave_map() -> void:
+	for d in dropped:
+		if d.get("kind") == "note" and not destroyed_notes.has(d.get("id")):
+			destroyed_notes.append(d.get("id"))
+	if not dropped.is_empty():
+		dropped = []
+		inventory_changed.emit()
 
 
 func unlock_codex(id: String) -> void:
@@ -349,6 +511,9 @@ func _default_state() -> Dictionary:
 		"map_day": DEFAULT_MAP_DAY,
 		"collected": {},
 		"notes": _str_array([]),
+		"inventory": Inventory.empty(),
+		"destroyed_notes": _str_array([]),
+		"dropped": [],
 		"talked": _str_array([]),
 		"owned_items": _str_array([]),
 		"scores": {},
@@ -390,6 +555,7 @@ func _death_reset_keeping(keep: Array[String]) -> void:
 	_apply_state(kept)
 	progress = "scene_01"
 	state_reset.emit()
+	inventory_changed.emit()
 
 
 func _deep_copy(v: Variant) -> Variant:
@@ -475,6 +641,8 @@ func _migrate(state: Dictionary, from_version: int) -> Dictionary:
 	match from_version:
 		0:
 			return _migrate_0_to_1(state)
+		1:
+			return _migrate_1_to_2(state)
 	push_error("GameState: no migration from save version %d" % from_version)
 	return state
 
@@ -482,6 +650,16 @@ func _migrate(state: Dictionary, from_version: int) -> Dictionary:
 ## Version 0 was a bare state dictionary with no envelope. The field set is
 ## unchanged, so this only unwraps; renames from later versions go in their own step.
 func _migrate_0_to_1(state: Dictionary) -> Dictionary:
+	return state
+
+
+## Version 2 added the item system. Old saves get an empty inventory: no bag, no notebook, so no
+## kept notes (notes now means the notes in the notebook), nothing destroyed, nothing on the ground.
+func _migrate_1_to_2(state: Dictionary) -> Dictionary:
+	state["inventory"] = Inventory.empty()
+	state["notes"] = []
+	state["destroyed_notes"] = []
+	state["dropped"] = []
 	return state
 
 
@@ -513,9 +691,18 @@ func _normalize(raw: Dictionary) -> Dictionary:
 			"secrets_held":
 				if typeof(v) == TYPE_ARRAY:
 					out[key] = _only_hand(_str_array(v))
-			"notes", "talked", "owned_items", "codex":
+			"notes", "talked", "owned_items", "codex", "destroyed_notes":
 				if typeof(v) == TYPE_ARRAY:
 					out[key] = _str_array(v)
+			"inventory":
+				out[key] = Inventory.normalize(v)
+			"dropped":
+				if typeof(v) == TYPE_ARRAY:
+					for d in v:
+						if typeof(d) == TYPE_DICTIONARY and ["item", "note"].has(d.get("kind")) \
+								and typeof(d.get("id")) == TYPE_STRING and typeof(d.get("room")) == TYPE_STRING \
+								and (typeof(d.get("x")) == TYPE_FLOAT or typeof(d.get("x")) == TYPE_INT):
+							out[key].append({"kind": d["kind"], "id": d["id"], "room": d["room"], "x": float(d["x"])})
 			"secrets_known_by":
 				if typeof(v) == TYPE_DICTIONARY:
 					for card in v:
@@ -542,6 +729,9 @@ func _normalize(raw: Dictionary) -> Dictionary:
 						"hearts_halves": clampi(_as_int(v["hearts_halves"], hearts_max_halves), 0, hearts_max_halves),
 						"nunchi": clampi(_as_int(v["nunchi"], 0), 0, nunchi_cap),
 					}
+					if v.has("inventory"):
+						out[key]["inventory"] = Inventory.normalize(v["inventory"])
+						out[key]["notes"] = _str_array(v["notes"]) if typeof(v.get("notes")) == TYPE_ARRAY else _str_array([])
 	if out["in_fight"] and out["fight_snapshot"].is_empty():
 		out["in_fight"] = false
 	if not out["in_fight"]:

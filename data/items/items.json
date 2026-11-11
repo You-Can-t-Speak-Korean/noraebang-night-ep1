@@ -1,0 +1,10 @@
+{
+	"_comment": "Item data. kind: bag (holds `slots` slots) | notebook (holds `pages` notes, one per page) | heal (heals `heal_halves` halves of a heart). size_in_bag: slots the item takes inside a bag; for a bag, size_in_bag > 0 means it can be carried inside a bag with size_in_bag 0 (one level only), keeping its own slots and contents. stack_max: how many of one item share a slot.",
+	"items": {
+		"pencil_case": {"name": "필통", "kind": "bag", "slots": 4, "size_in_bag": 3, "stack_max": 1},
+		"school_bag":  {"name": "책가방", "kind": "bag", "slots": 12, "size_in_bag": 0, "stack_max": 1},
+		"notebook":    {"name": "공책", "kind": "notebook", "pages": 3, "size_in_bag": 0, "stack_max": 1},
+		"bandage":     {"name": "반창고", "kind": "heal", "heal_halves": 1, "size_in_bag": 1, "stack_max": 1},
+		"red_medicine": {"name": "빨간약", "kind": "heal", "heal_halves": 2, "size_in_bag": 1, "stack_max": 1}
+	}
+}

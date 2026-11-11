@@ -50,6 +50,7 @@ const AMBIENT_ENERGY := 0.6
 const AMBIENT_COLOR := Color(0.75, 0.72, 0.7)
 const FRANTIC_COLOR := Color(1.0, 0.2, 0.15)
 const CROSS_KEY := KEY_X
+const QUICK_HEAL_KEY := KEY_E
 const HINT_CROSS := "X or click the eyes: cross out a wrong option, costs 1 nunchi [placeholder]"
 const HINT_NO_NUNCHI := "No nunchi left to cross out [placeholder]"
 const SCREAM_LABEL_TIME := 1.0
@@ -295,6 +296,12 @@ func results_time() -> float:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_echo():
+		return
+	if event is InputEventKey and event.pressed and event.keycode == QUICK_HEAL_KEY and not check_mode:
+		# E: use a health item from any bag, in a blank's freeze too (the countdown keeps running).
+		if state == State.PLAYING or state == State.FREEZE or state == State.BEAT:
+			ItemUI.do_quick_heal(self)
+			get_viewport().set_input_as_handled()
 		return
 	var clicked: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
 	if check_mode and _audition_input(event):
@@ -695,6 +702,11 @@ func _finish_song() -> void:
 		_card_bg.color = Color(0.25, 0.0, 0.02, 0.94)
 		_card_title.text = "REVENGE WIN"
 		_card_body.text = "%s\n\nHearts restored to full." % card_text
+		if not GameState.last_rewards.is_empty():
+			var got: Array[String] = []
+			for id in GameState.last_rewards:
+				got.append(Items.item_name(id))
+			_card_body.text += "\nGot: %s" % ", ".join(got)
 		_scatter_splats()
 		_burst(_eunju_pos + Vector3(0, 1.0, 0), 160, 1.6)
 		_burst(_eunju_pos + Vector3(-0.8, 0.6, 0.3), 120, 1.3)

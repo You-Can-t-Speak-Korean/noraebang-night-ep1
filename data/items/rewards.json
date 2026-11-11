@@ -1,0 +1,8 @@
+{
+	"_comment": "boss -> outcome -> items given when that fight ends that way. unless_equipped_kind: not given when the player already has an item of that kind equipped (bag / notebook).",
+	"eunju": {
+		"revenge": [
+			{"item": "pencil_case", "unless_equipped_kind": "bag"}
+		]
+	}
+}

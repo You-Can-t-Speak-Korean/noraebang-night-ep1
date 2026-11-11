@@ -9,6 +9,7 @@
 # The world test with a save from a newer version adds one more push_error
 # ("World: could not load the save ...").
 # Bad --seed / --hearts / --skip-to / --fight / --fight-auto values push_warnings by design.
+# The items tests push a warning for an unknown id in --give ('bogus'), by design.
 # The load-time labels tests push_error ("SongLabels: labels bad_labels.txt do not apply ..."), the tap
 # tool tests push_warning (its on-screen problems), and a --mark-song without a boss warns, by design.
 #
@@ -27,6 +28,9 @@ func _initialize() -> void:
 	var real_save := GameStateScript.SAVE_PATH
 	var real_existed := FileAccess.file_exists(real_save)
 	var real_before := FileAccess.get_file_as_bytes(real_save) if real_existed else PackedByteArray()
+	var real_settings := Settings.PATH
+	var real_settings_existed := FileAccess.file_exists(real_settings)
+	var real_settings_before := FileAccess.get_file_as_bytes(real_settings) if real_settings_existed else PackedByteArray()
 	check(_gs().save_path == GameStateScript.SANDBOX_PATH, "the test runner uses the sandbox save path, not the real one")
 	_test_hearts()
 	_test_nunchi()
@@ -60,6 +64,8 @@ func _initialize() -> void:
 	await _test_hud_icons()
 	await _test_world_search()
 	await _test_world_full_run()
+	_test_items_pure()
+	await _test_items_world()
 	_test_3b_files()
 	await _test_scene2_effects()
 	await _test_scene2_paths()
@@ -84,9 +90,11 @@ func _initialize() -> void:
 	await _test_build_4b()
 	await _test_build_4ca()
 	await _test_build_4cb()
+	await _test_items_fight()
 	check(_real_song_md5s() == song_files_before, "the tests leave the real song JSON and labels file byte-identical")
 	check(FileAccess.get_file_as_bytes(project_path) == project_before, "the fight tests leave project.godot byte-identical")
 	check(FileAccess.file_exists(real_save) == real_existed and (not real_existed or FileAccess.get_file_as_bytes(real_save) == real_before), "the real save was never touched by the run")
+	check(FileAccess.file_exists(real_settings) == real_settings_existed and (not real_settings_existed or FileAccess.get_file_as_bytes(real_settings) == real_settings_before), "the real settings file was never touched by the run")
 	_clean_world_saves()
 	print("\n%d checks, %d failed" % [checks, failures])
 	quit(1 if failures > 0 else 0)
@@ -268,6 +276,9 @@ func _dirty(gs: Node) -> void:
 	gs.spawn_seed = 12345
 	gs.mark_collected("map1-day2", "coin")
 	gs.add_note("n")
+	gs.give_item("notebook")
+	gs.destroyed_notes.append("note_3")
+	gs.dropped.append({"kind": "item", "id": "bandage", "room": "alley", "x": 1.5})
 	gs.mark_talked("t")
 	gs.add_item("i")
 	gs.end_fight("eunju", "revenge", 5)
@@ -280,7 +291,7 @@ func _test_resets() -> void:
 	print("Resets")
 	var gs := make_gs()
 	var defaults: Dictionary = gs._default_state()
-	check(defaults.size() == 18, "default state has all 18 saved fields")
+	check(defaults.size() == 21, "default state has all 21 saved fields")
 	_dirty(gs)
 	var died := watch(gs, ["state_reset"])
 	gs.death_reset()
@@ -344,7 +355,7 @@ func _test_saves() -> void:
 	check(not FileAccess.file_exists(gs.save_path + ".tmp"), "atomic write leaves no temp file")
 	check(not FileAccess.file_exists(gs.save_path + ".bak"), "no .bak on first save")
 	var env = JSON.parse_string(_read(gs.save_path))
-	check(env["game"] == "noraebang-night" and int(env["save_version"]) == 1 and env["state_version"] == "0.4", "envelope fields")
+	check(env["game"] == "noraebang-night" and int(env["save_version"]) == 2 and env["state_version"] == "0.4", "envelope fields")
 	check(not env["state"].has("leaks"), "leaks are not saved")
 
 	var other := make_gs()
@@ -393,7 +404,7 @@ func _test_saves() -> void:
 
 	# Normalisation.
 	var messy := {
-		"game": "noraebang-night", "save_version": 1, "state_version": "0.4",
+		"game": "noraebang-night", "save_version": 2, "state_version": "0.4",
 		"state": {
 			"hearts_halves": 99, "nunchi": -4, "ddeok": -1, "spawn_seed": "x",
 			"secrets_held": ["pride", "pride", "bogus", 7, "our_home"],
@@ -900,8 +911,8 @@ func _test_dealer_data() -> void:
 		var b: Dictionary = cfg["budgets"][day]
 		check(b["ddeok"] == 2 and b["ddeok_amount"] == 1 and b["extras"] == 1 and b["traps"] == 2, "%s budget: 2 DDEOK (1 each), 1 extra, 2 traps" % day)
 		check(b["ddeok"] + b["extras"] == 3 and b["traps"] == 2, "%s: 3 rewards to 2 traps (6:4)" % day)
-	check(cfg["extras"]["note"]["weight"] == 2 and cfg["extras"]["band_aid"]["weight"] == 2 and cfg["extras"]["red_medicine"]["weight"] == 1, "extra weights 2 / 2 / 1")
-	check(cfg["extras"]["band_aid"]["heal"] == 1 and cfg["extras"]["red_medicine"]["heal"] == 2, "반창고 heals 1 half, 빨간약 heals 2")
+	check(cfg["extras"]["note"]["weight"] == 2 and cfg["extras"]["bandage"]["weight"] == 2 and cfg["extras"]["red_medicine"]["weight"] == 1, "extra weights 2 / 2 / 1")
+	check(cfg["extras"]["bandage"]["heal"] == 1 and cfg["extras"]["red_medicine"]["heal"] == 2, "반창고 heals 1 half, 빨간약 heals 2")
 	check(cfg["notes"].size() == 3, "3 notes")
 	var all_placeholder := true
 	for id in cfg["notes"]:
@@ -1250,10 +1261,12 @@ func _test_world_search() -> void:
 	world.layout = {
 		"stove": {"kind": "ddeok", "amount": 1},
 		"lectern": {"kind": "trap", "name": "쥐덫", "damage": 1},
-		"cabinet": {"kind": "health", "item": "band_aid", "name": "반창고", "heal": 1},
+		"cabinet": {"kind": "health", "item": "bandage", "name": "반창고", "heal": 1},
 		"back_chair": {"kind": "note", "note_id": "note_2"},
 		"shoe_rack": {"kind": "health", "item": "red_medicine", "name": "빨간약", "heal": 2},
 	}
+	gs.give_item("pencil_case")
+	gs.give_item("notebook")
 	gs.damage(4)
 	check(gs.hearts_halves == 6, "start the search test at 6 halves")
 
@@ -1268,17 +1281,18 @@ func _test_world_search() -> void:
 	await _close_text(world)
 
 	await _search_spot(world, cfg, "back_chair")
-	check(gs.has_note("note_2") and world._text_label.text.contains(cfg["notes"]["note_2"]), "a note goes to GameState and its text is shown")
-	await _close_text(world)
+	check(world.item_ui.popup_open and world.item_ui.popup_body.contains(cfg["notes"]["note_2"]) and world.player.movement_locked, "a note shows its text first, in a popup that locks movement")
+	check(not gs.has_note("note_2") and not gs.is_collected(MAP_KEY, "back_chair:note"), "...and nothing is taken until a choice is made")
+	await _press("confirm")
+	check(gs.has_note("note_2") and gs.is_collected(MAP_KEY, "back_chair:note") and not world.item_ui.is_open, "Enter on 공책에 넣는다 writes the note in the notebook")
 	await _search_spot(world, cfg, "cabinet")
-	check(gs.hearts_halves == 7 and world._text_label.text.contains("반창고") and world._text_label.text.contains("½"), "반창고 heals 1 half at once")
-	await _close_text(world)
+	check(gs.inventory["bag_items"] == ["bandage"] and gs.hearts_halves == 6 and not world.item_ui.is_open, "a health item goes into the 필통 (no heal, no popup)")
+	check(gs.is_collected(MAP_KEY, "cabinet:health") and ItemUI.last_toast.contains("반창고"), "...it is recorded as taken, with a small cue")
 	await _search_spot(world, cfg, "shoe_rack")
-	check(gs.hearts_halves == 9 and world._text_label.text.contains("빨간약"), "빨간약 heals 2 halves at once")
-	await _close_text(world)
+	check(gs.inventory["bag_items"] == ["bandage", "red_medicine"] and gs.hearts_halves == 6, "a second health item goes in too")
 	var before_flash: int = world.flashes
 	await _search_spot(world, cfg, "lectern")
-	check(gs.hearts_halves == 8 and world._text_label.text.contains("쥐덫") and world._text_label.text.contains("½"), "a ½-heart trap costs 1 half")
+	check(gs.hearts_halves == 5 and world._text_label.text.contains("쥐덫") and world._text_label.text.contains("½"), "a ½-heart trap costs 1 half")
 	check(world.flashes == before_flash + 1 and world._flash_rect.color.a > 0.0, "a trap flashes the screen red")
 	await _close_text(world)
 
@@ -1287,12 +1301,11 @@ func _test_world_search() -> void:
 	check(world._text_label.text == lines["empty"] and gs.is_collected(MAP_KEY, "restroom:empty"), "an undealt spot is empty and recorded")
 	await _close_text(world)
 
-	# Hearts clamp at the maximum.
+	# Full hearts: a health item still goes in the bag, nothing heals.
 	gs.hearts_halves = gs.hearts_max_halves
 	world.layout = {"sandbox": {"kind": "health", "item": "red_medicine", "name": "빨간약", "heal": 2}}
 	await _search_spot(world, cfg, "sandbox")
-	check(gs.hearts_halves == gs.hearts_max_halves, "healing clamps at full hearts")
-	await _close_text(world)
+	check(gs.hearts_halves == gs.hearts_max_halves and gs.inventory["bag_items"].size() == 3, "at full hearts a health item is simply put away")
 
 	# A 1-heart trap.
 	world.layout = {"iron_bar": {"kind": "trap", "name": "녹슨 철봉", "damage": 2}}
@@ -1320,6 +1333,7 @@ func _test_world_search() -> void:
 	check(not world._game_over and not world._game_over_layer.visible and not world._text_open, "Enter leaves the game-over screen")
 	check(world.room_id == "classroom_1_3" and is_equal_approx(world.player.position.x, 7.0), "death restarts in 1학년 3반 at its door")
 	check(gs.hearts_halves == gs.hearts_max_halves and gs.ddeok == 0 and gs.notes.is_empty() and gs.collected.is_empty() and gs.progress == "scene_01" and gs.map_day == "sat", "GameState is fresh after the death reset")
+	check(gs.inventory == Inventory.empty() and not gs.has_bag() and not gs.has_notebook(), "...with an empty inventory")
 	check(not world.player.movement_locked, "movement is unlocked after the restart")
 	check(world.layout.size() == 5 and gs.secrets_held.size() == gs.hand.size(), "a new layout is dealt and the hand is restored")
 	var saved := make_gs()
@@ -1346,22 +1360,24 @@ func _test_world_full_run() -> void:
 		ids.sort()
 		var reachable := true
 		var expected_hearts: int = gs.hearts_halves
+		gs.give_item("pencil_case")
+		gs.give_item("notebook")
 		for id in ids:
 			var reached: bool = await _search_spot(world, cfg, id)
 			reachable = reachable and reached
+			if world.item_ui.popup_open:
+				await _press("confirm")  # a note: 공책에 넣는다
 			await _close_text(world)
 			var entry: Dictionary = layout.get(id, {"kind": "empty"})
 			if entry["kind"] == "trap":
 				expected_hearts = maxi(expected_hearts - int(entry["damage"]), 1)
-			elif entry["kind"] == "health":
-				expected_hearts = mini(expected_hearts + int(entry["heal"]), gs.hearts_max_halves)
 		check(reachable, "%s: all %d spots can be reached and searched with Enter" % [day, ids.size()])
 		var tally := {"ddeok": 0, "note": 0, "health": 0, "trap": 0, "empty": 0}
 		for entry in gs.collected["map_01:" + day]:
 			tally[str(entry).split(":")[1]] += 1
 		check(tally["ddeok"] == 2 and tally["note"] + tally["health"] == 1 and tally["trap"] == 2 and tally["empty"] == ids.size() - 5, "%s: the run found exactly the day's budget %s" % [day, str(tally)])
 		check(gs.ddeok == 2, "%s: 2 DDEOK in GameState" % day)
-		check(gs.notes.size() == tally["note"], "%s: notes match the finds" % day)
+		check(gs.notes.size() == tally["note"] and gs.inventory["bag_items"].size() == tally["health"], "%s: notes are in the notebook and health items in the 필통" % day)
 		check(gs.hearts_halves == expected_hearts, "%s: hearts match the traps and health items found (%d halves)" % [day, gs.hearts_halves])
 		check(gs.collected["map_01:" + day].size() == ids.size(), "%s: every spot recorded once" % day)
 		if day == "mon":
@@ -3576,7 +3592,7 @@ func _test_fight_world() -> void:
 	var fight: Node3D = world.start_fight("eunju", "", false, true)
 	await _frames(2)
 	check(fight != null and world.fight == fight and gs.in_fight and gs.current_boss == "eunju", "start_fight begins the fight")
-	check(gs.fight_snapshot == {"hearts_halves": 7, "nunchi": 2}, "the snapshot is hearts and 눈치 at the start")
+	check(gs.fight_snapshot["hearts_halves"] == 7 and gs.fight_snapshot["nunchi"] == 2 and gs.fight_snapshot["inventory"] == Inventory.empty() and gs.fight_snapshot["notes"] == [], "the snapshot is hearts, 눈치 and the inventory at the start")
 	check(fight.is_inside_tree() and fight.get_parent() == world, "the fight is a child of the world")
 	var saved = JSON.parse_string(FileAccess.get_file_as_string(gs.save_path))
 	check(saved["state"]["in_fight"] == true and saved["state"]["fight_snapshot"]["hearts_halves"] == 7 and saved["state"]["hearts_halves"] == 7, "autosaved at the fight start")
@@ -5096,3 +5112,682 @@ func _test_scream_picks() -> void:
 		f.queue_free()
 		await _frames(2)
 	check(seqs[0] == seqs[1], "the same seed gives the same scream sequence")
+
+
+# ── Build 5a: items, containers, pickups, quick heal ───────────────────
+
+## A key press and release through Input.parse_input_event (the real UI is listening).
+func _ikey(keycode: int) -> void:
+	var e := InputEventKey.new()
+	e.keycode = keycode
+	e.physical_keycode = keycode
+	e.pressed = true
+	Input.parse_input_event(e)
+	await _frames(2)
+	var r := InputEventKey.new()
+	r.keycode = keycode
+	r.physical_keycode = keycode
+	r.pressed = false
+	Input.parse_input_event(r)
+	await _frames(1)
+
+
+## A left click at a screen position, pushed into the root viewport's GUI (headless, Input.parse_input_event
+## never reaches the controls under the mouse).
+func _click_at(pos: Vector2) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.position = pos
+	e.global_position = pos
+	e.pressed = true
+	root.push_input(e, true)
+	await _frames(2)
+	var r := InputEventMouseButton.new()
+	r.button_index = MOUSE_BUTTON_LEFT
+	r.position = pos
+	r.global_position = pos
+	r.pressed = false
+	root.push_input(r, true)
+	await _frames(2)
+
+
+func _test_items_pure() -> void:
+	print("Items (pure)")
+	var names := {"pencil_case": "필통", "school_bag": "책가방", "notebook": "공책", "bandage": "반창고", "red_medicine": "빨간약"}
+	var all_named := true
+	for id in names:
+		all_named = all_named and Items.exists(id) and Items.item_name(id) == names[id]
+	check(all_named and Items.ids().size() == 5, "items.json: 필통, 책가방, 공책, 반창고, 빨간약")
+	check(Items.kind("pencil_case") == "bag" and Items.slots("pencil_case") == 4 and Items.slots("school_bag") == 12, "필통 has 4 slots, 책가방 12")
+	check(Items.kind("notebook") == "notebook" and Items.pages("notebook") == 3, "공책 has 3 pages")
+	check(Items.heal_halves("bandage") == 1 and Items.heal_halves("red_medicine") == 2 and Items.size_in_bag("bandage") == 1 and Items.size_in_bag("pencil_case") == 3, "반창고 heals ½, 빨간약 1, a 필통 takes 3 slots in a 책가방")
+	check(Items.stack_max("bandage") == 1 and Items.stack_max("nope") == 1 and not Items.exists("nope"), "stack_max defaults to 1; unknown ids do not exist")
+	check(Items.josa_i_ga("필통") == "이" and Items.josa_i_ga("책가방") == "이" and Items.josa_i_ga("공책") == "이" and Items.josa_i_ga("소파") == "가", "이/가 follows the final consonant")
+
+	# Capacity.
+	var inv := Inventory.empty()
+	check(not Inventory.has_bag(inv) and Inventory.store(inv, "bandage") == "", "no bag: nothing can be stored")
+	check(Inventory.give(inv, "pencil_case") and inv["bag"] == "pencil_case", "a 필통 is equipped")
+	var stored := 0
+	for i in 5:
+		if Inventory.store(inv, "bandage") != "":
+			stored += 1
+	check(stored == 4 and Inventory.bag_used(inv) == 4 and Inventory.bag_capacity(inv) == 4, "a 필통 holds 4 and no more")
+	check(Inventory.store(inv, "notebook") == "" and Inventory.give_result(inv, "pencil_case") == "none", "a notebook is not stored in a bag; a second 필통 is not taken")
+
+	# The 필통 in a 책가방.
+	var big := Inventory.empty()
+	Inventory.give(big, "school_bag")
+	check(Inventory.bag_capacity(big) == 12 and Inventory.give_result(big, "pencil_case") == "nest", "a 책가방 has 12 slots and takes a 필통")
+	Inventory.give(big, "pencil_case")
+	check(big["case"] == "pencil_case" and Inventory.nested_size(big) == 3 and Inventory.bag_used(big) == 3, "the nested 필통 takes 3 of the 12 slots")
+	check(Inventory.case_capacity(big) == 4 and Inventory.groups(big).size() == 2, "...and keeps its own 4 slots as its own group")
+	var placed := 0
+	for i in 14:
+		if Inventory.store(big, "red_medicine") != "":
+			placed += 1
+	check(placed == 13 and big["bag_items"].size() == 9 and big["case_items"].size() == 4, "9 free 책가방 slots + the 필통's 4 = 13 items")
+	check(Inventory.give_result(big, "pencil_case") == "none" and not Inventory.nestable_in("pencil_case", "school_bag") and not Inventory.nestable_in("school_bag", "school_bag"), "one level of nesting only")
+
+	# Upgrading keeps the 필통 and its contents.
+	var up := Inventory.empty()
+	Inventory.give(up, "pencil_case")
+	Inventory.store(up, "bandage")
+	Inventory.store(up, "red_medicine")
+	check(Inventory.give_result(up, "school_bag") == "upgrade" and Inventory.give(up, "school_bag"), "a 책가방 given to a 필통 owner takes the 필통 in")
+	check(up["bag"] == "school_bag" and up["case"] == "pencil_case" and same(up["case_items"], ["bandage", "red_medicine"]) and up["bag_items"].is_empty(), "...with its contents")
+
+	# A downgrade asks what to drop.
+	var down := Inventory.empty()
+	Inventory.give(down, "school_bag")
+	Inventory.give(down, "pencil_case")
+	for i in 5:
+		Inventory.store(down, "bandage")
+	Inventory.store(down, "red_medicine")
+	Inventory.store(down, "red_medicine")
+	Inventory.store(down, "red_medicine")
+	var plan := Inventory.swap_plan(down, "pencil_case")
+	check(plan["items"].size() == 8 and plan["capacity"] == 4 and plan["over"], "swapping 책가방 for 필통: 8 items, 4 slots, so something must go")
+	var refused := Inventory.swap(down, "pencil_case", [0, 1])
+	check(not refused["ok"] and down["bag"] == "school_bag" and down["bag_items"].size() == 8, "dropping too few changes nothing")
+	var done := Inventory.swap(down, "pencil_case", [0, 1, 2, 3])
+	check(done["ok"] and done["dropped"].size() == 4 and down["bag"] == "pencil_case" and down["bag_items"].size() == 4 and down["case"] == "", "dropping 4 lets the 필통 take the other 4")
+	var roomy := Inventory.empty()
+	Inventory.give(roomy, "school_bag")
+	Inventory.store(roomy, "bandage")
+	check(not Inventory.swap_plan(roomy, "pencil_case")["over"], "no choice is needed when everything fits")
+
+	# Stacking is data: stack_max 2 halves the slots.
+	_clean_saves()
+	DirAccess.make_dir_recursive_absolute(SAVE_DIR)
+	_write(SAVE_DIR + "/items.json", JSON.stringify({"items": {
+		"pencil_case": {"name": "필통", "kind": "bag", "slots": 4, "size_in_bag": 3},
+		"bandage": {"name": "반창고", "kind": "heal", "heal_halves": 1, "stack_max": 2}}}))
+	Items.load_data(SAVE_DIR + "/items.json")
+	var stack := Inventory.empty()
+	Inventory.give(stack, "pencil_case")
+	var n := 0
+	for i in 10:
+		if Inventory.store(stack, "bandage") != "":
+			n += 1
+	check(n == 8 and Inventory.bag_used(stack) == 4, "stack_max 2: a 필통 holds 8 반창고")
+	Items.load_data()
+	_clean_saves()
+	check(Items.exists("school_bag") and Items.stack_max("bandage") == 1, "the real item data is back")
+
+	# Normalising a saved inventory.
+	var messy := Inventory.normalize({"bag": "pencil_case", "bag_items": ["bandage", "bandage", "bandage", "bandage", "bandage", "bogus", 7], "case": "pencil_case", "notebook": "school_bag"})
+	check(messy["bag_items"].size() == 4 and messy["case"] == "" and messy["notebook"] == "", "a saved inventory is cut to capacity, nesting and wrong kinds dropped")
+	check(Inventory.normalize("x") == Inventory.empty() and Inventory.normalize({"bag": "bogus"}) == Inventory.empty(), "garbage becomes an empty inventory")
+
+	# The notebook.
+	var gs := make_gs()
+	check(not gs.can_keep_note() and not gs.keep_note("note_1"), "no notebook: no page to write on")
+	gs.give_item("notebook")
+	check(gs.has_notebook() and gs.can_keep_note(), "a notebook gives pages")
+	check(gs.keep_note("note_2") and gs.keep_note("note_1") and gs.keep_note("note_3"), "3 notes fit")
+	check(gs.notes == ["note_2", "note_1", "note_3"] and not gs.can_keep_note() and not gs.keep_note("note_4"), "notes are in the order they were written; a 4th does not fit")
+	check(gs.remove_note("note_1") and gs.notes == ["note_2", "note_3"] and gs.can_keep_note(), "taking a note out frees its page")
+	gs.destroy_note("note_2")
+	check(gs.notes == ["note_3"] and gs.destroyed_notes == ["note_2"] and gs.notes_unavailable().has("note_2") and gs.notes_unavailable().has("note_3"), "a destroyed note is gone and never dealt again")
+	gs.dropped.append({"kind": "note", "id": "note_1", "room": "alley", "x": 0.0})
+	check(gs.notes_unavailable().has("note_1"), "a note lying on the ground is not dealt a second time")
+	gs.leave_map()
+	check(gs.dropped.is_empty() and gs.destroyed_notes.has("note_1"), "leaving the map: what lay on the ground is gone for good")
+	gs.free()
+
+	# Quick heal.
+	var q := make_gs()
+	q.give_item("pencil_case")
+	q.give_item("red_medicine")
+	q.give_item("bandage")
+	q.give_item("bandage")
+	q.damage(6)
+	check(q.quick_heal_order == "lowest_first", "quick_heal_order defaults to lowest_first")
+	var order: Array = []
+	for i in 3:
+		var r: Dictionary = q.quick_heal()
+		order.append(r.get("item", r["result"]))
+	check(order == ["bandage", "bandage", "red_medicine"] and q.hearts_halves == 4 + 1 + 1 + 2, "lowest_first: 반창고 until none are left, then 빨간약")
+	check(q.quick_heal()["result"] == "full" or q.hearts_halves < q.hearts_max_halves, "...")
+	q.damage(3)
+	check(q.quick_heal()["result"] == "none", "nothing to use")
+	q.free()
+	var h := make_gs()
+	h.quick_heal_order = "highest_first"
+	h.give_item("pencil_case")
+	h.give_item("bandage")
+	h.give_item("red_medicine")
+	h.give_item("bandage")
+	h.damage(8)
+	order = []
+	for i in 3:
+		order.append(h.quick_heal().get("item", ""))
+	check(order == ["red_medicine", "bandage", "bandage"], "highest_first: 빨간약 first")
+	h.hearts_halves = h.hearts_max_halves
+	h.give_item("bandage")
+	var full: Dictionary = h.quick_heal()
+	check(full["result"] == "full" and h.inventory["bag_items"] == ["bandage"], "full hearts: nothing is used")
+	h.free()
+	var both := make_gs()
+	both.give_item("school_bag")
+	both.give_item("pencil_case")
+	for i in 9:
+		both.give_item("red_medicine")
+	both.give_item("bandage")
+	both.damage(4)
+	check(both.inventory["case_items"] == ["bandage"] and both.quick_heal()["item"] == "bandage" and both.inventory["case_items"].is_empty(), "quick heal reaches into the nested 필통")
+	both.free()
+
+	# Saving, loading, migrating, resetting.
+	_clean_saves()
+	var s := make_gs()
+	s.save_path = SAVE_DIR + "/items.json"
+	s.give_item("school_bag")
+	s.give_item("pencil_case")
+	s.give_item("bandage")
+	s.give_item("notebook")
+	s.keep_note("note_2")
+	s.destroyed_notes.append("note_1")
+	s.dropped.append({"kind": "item", "id": "red_medicine", "room": "alley", "x": 2.5})
+	check(s.save_game() == OK, "an inventory saves")
+	var l := make_gs()
+	l.save_path = s.save_path
+	check(l.load_game() == OK and l.inventory == s.inventory and l.notes == ["note_2"] and l.destroyed_notes == ["note_1"] and l.dropped == s.dropped, "...and loads back the same: containers, nested 필통, notes, destroyed notes, dropped items")
+	check(GameStateScript.SAVE_VERSION == 2, "the save version is 2")
+	var old := {"game": "noraebang-night", "save_version": 1, "state_version": "0.4", "state": {"hearts_halves": 7, "ddeok": 4, "notes": ["note_1", "note_2"], "progress": "sat_roam"}}
+	_write(s.save_path, JSON.stringify(old))
+	var m := make_gs()
+	m.save_path = s.save_path
+	check(m.load_game() == OK and m.hearts_halves == 7 and m.ddeok == 4 and m.progress == "sat_roam", "a version-1 save loads")
+	check(m.inventory == Inventory.empty() and m.notes.is_empty() and m.destroyed_notes.is_empty() and m.dropped.is_empty(), "...with an empty inventory (no bag, no notebook, so no kept notes)")
+	check(m._migrate_1_to_2({"a": 1}).has("inventory"), "_migrate_1_to_2 exists")
+	_write(s.save_path, JSON.stringify({"game": "noraebang-night", "save_version": 2, "state_version": "0.4", "state": {"inventory": {"bag": "bogus", "notebook": 5}, "dropped": [{"kind": "item"}, 3], "destroyed_notes": ["a", "a", 1]}}))
+	check(m.load_game() == OK and m.inventory == Inventory.empty() and m.dropped.is_empty() and m.destroyed_notes == ["a"], "a damaged inventory in a save is cleaned")
+	s.death_reset()
+	check(s.inventory == Inventory.empty() and s.notes.is_empty() and s.destroyed_notes.is_empty() and s.dropped.is_empty(), "the death reset clears the inventory")
+	s.free(); l.free(); m.free()
+	_clean_saves()
+
+	# The fight snapshot holds the inventory.
+	var f := make_gs()
+	f.give_item("pencil_case")
+	f.give_item("bandage")
+	f.give_item("red_medicine")
+	f.give_item("notebook")
+	f.keep_note("note_3")
+	f.begin_fight("eunju")
+	f.quick_heal_order = "lowest_first"
+	f.damage(4)
+	f.quick_heal()
+	f.quick_heal()
+	f.destroy_note("note_3")
+	check(f.inventory["bag_items"].is_empty() and f.notes.is_empty(), "the items were used in the fight")
+	check(f.retry_fight() and same(f.inventory["bag_items"], ["bandage", "red_medicine"]) and f.notes == ["note_3"] and f.hearts_halves == 10, "a retry restores the inventory (and the notes) to the fight start")
+	f.free()
+
+	# Rewards.
+	check(same(Items.rewards("eunju", "revenge"), [{"item": "pencil_case", "unless_equipped_kind": "bag"}]) and Items.rewards("eunju", "survival").is_empty() and Items.rewards("nobody", "revenge").is_empty(), "rewards.json: eunju / revenge -> 필통 only")
+	var r1 := make_gs()
+	r1.end_fight("eunju", "revenge", 100)
+	check(r1.inventory["bag"] == "pencil_case" and r1.last_rewards == ["pencil_case"], "revenge against 은주 gives a 필통 when 보람 has no bag")
+	var r2 := make_gs()
+	r2.give_item("school_bag")
+	r2.give_item("bandage")
+	r2.end_fight("eunju", "revenge", 100)
+	check(r2.inventory["bag"] == "school_bag" and r2.inventory["case"] == "" and r2.inventory["bag_items"] == ["bandage"] and r2.last_rewards.is_empty(), "...and nothing when 보람 already has a bag")
+	var r3 := make_gs()
+	r3.end_fight("eunju", "survival", 40)
+	check(not r3.has_bag() and r3.last_rewards.is_empty(), "a survival win gives no 필통")
+	var r4 := make_gs()
+	r4.give_item("pencil_case")
+	r4.end_fight("eunju", "revenge", 100)
+	check(r4.inventory["bag"] == "pencil_case" and r4.inventory["case"] == "", "a second 필통 is not handed out")
+	r1.free(); r2.free(); r3.free(); r4.free()
+
+	# Settings: a ConfigFile with quick_heal_order; the real file is never touched here.
+	check(_gs().settings_path == Settings.SANDBOX_PATH and Settings.PATH != Settings.SANDBOX_PATH, "the test runner uses the sandbox settings path")
+	var sp := SAVE_DIR + "/settings.cfg"
+	_clean_saves()
+	check(Settings.load_heal_order(sp) == "lowest_first" and FileAccess.file_exists(sp), "a missing settings file is created with lowest_first")
+	Settings.save_heal_order(sp, "highest_first")
+	check(Settings.load_heal_order(sp) == "highest_first", "quick_heal_order is read back")
+	var cf := ConfigFile.new()
+	cf.load(sp)
+	cf.set_value(Settings.SECTION, "quick_heal_order", "sideways")
+	cf.save(sp)
+	check(Settings.load_heal_order(sp) == "lowest_first", "a bad value is the default")
+	_clean_saves()
+
+	# Launch args.
+	var WorldScript = load("res://scripts/world.gd")
+	var a: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--give", "pencil_case,notebook, bandage", "--heal-order", "highest_first"]))
+	check(a["give"] == ["pencil_case", "notebook", "bandage"] and a["heal_order"] == "highest_first", "--give and --heal-order parse")
+	var b: Dictionary = WorldScript.parse_launch_args(PackedStringArray(["--heal-order", "sideways", "--give"]))
+	check(b["give"].is_empty() and b["heal_order"] == "", "bad --give / --heal-order are ignored")
+	check(not WorldScript.parse_launch_args(PackedStringArray([]))["capture_items"] and WorldScript.parse_launch_args(PackedStringArray(["--capture-items"]))["capture_items"], "--capture-items parses")
+	check(GameStateScript.wants_sandbox(PackedStringArray(["--capture-items"])), "--capture-items is sandboxed")
+
+
+func _test_items_world() -> void:
+	print("Items (the map)")
+	var gs := _gs()
+	var cfg: Dictionary = DealerScript.load_config()
+	var world: Node = await _start_world()
+	gs.new_game()
+	gs.quick_heal_order = "lowest_first"
+	var ui: ItemUI = world.item_ui
+	var bandage := {"kind": "health", "item": "bandage", "name": "반창고", "heal": 1}
+	var medicine := {"kind": "health", "item": "red_medicine", "name": "빨간약", "heal": 2}
+	var note := {"kind": "note", "note_id": "note_1"}
+
+	# No bag: the popup, and the highlight moves with W/S.
+	gs.damage(4)
+	world.layout = {"cabinet": bandage, "stove": note, "lectern": medicine, "back_chair": bandage}
+	await _search_spot(world, cfg, "cabinet")
+	check(ui.popup_open and ui.popup_title == "넣을 데가 없다." and same(ui.popup_choices, ["지금 쓴다", "버린다"]), "no bag: 넣을 데가 없다. with 지금 쓴다 / 버린다")
+	check(world.player.movement_locked and ui.is_open, "the popup locks movement")
+	await _press("ui_down")
+	check(ui.popup_selected == 1, "S moves the highlight down")
+	await _press("ui_up")
+	check(ui.popup_selected == 0, "W moves it back")
+	await _press("confirm")
+	check(not ui.is_open and gs.hearts_halves == 7 and gs.is_collected(MAP_KEY, "cabinet:health") and not world.player.movement_locked, "지금 쓴다 heals ½ at once, the spot is taken, movement is free again")
+	check(not gs.has_bag() and gs.inventory["bag_items"].is_empty(), "...nothing went into a bag")
+
+	# 버린다 leaves the pickup where it is.
+	await _search_spot(world, cfg, "lectern")
+	await _press("ui_down")
+	await _press("confirm")
+	check(not ui.is_open and gs.hearts_halves == 7 and not gs.is_collected(MAP_KEY, "lectern:health"), "버린다 leaves the item at its spot, untaken")
+	await _search_spot(world, cfg, "lectern")
+	check(ui.popup_open and ui.popup_body == "빨간약", "...and it can be picked up again")
+	await _press("ui_down")
+	await _press("confirm")
+
+	# 지금 쓴다 at full hearts: 아픈 데가 없다., nothing happens.
+	gs.hearts_halves = gs.hearts_max_halves
+	await _search_spot(world, cfg, "lectern")
+	await _press("confirm")
+	check(ItemUI.last_toast == "아픈 데가 없다." and gs.hearts_halves == gs.hearts_max_halves and not gs.is_collected(MAP_KEY, "lectern:health"), "지금 쓴다 at full hearts: 아픈 데가 없다., the item stays")
+	await _search_spot(world, cfg, "lectern")
+	check(ui.popup_open, "...so the pickup is still there")
+	await _press("ui_down")
+	await _press("confirm")
+
+	# A click on a choice.
+	await _search_spot(world, cfg, "lectern")
+	var btn: Button = ui._popup_buttons[1]
+	await _click_at(btn.get_global_rect().get_center())
+	check(not ui.is_open and not gs.is_collected(MAP_KEY, "lectern:health"), "a click on 버린다 chooses it")
+	await _search_spot(world, cfg, "lectern")
+	gs.damage(4)
+	await _click_at(ui._popup_buttons[0].get_global_rect().get_center())
+	check(not ui.is_open and gs.hearts_halves == gs.hearts_max_halves - 4 + 2 and gs.is_collected(MAP_KEY, "lectern:health"), "a click on 지금 쓴다 uses it")
+
+	# Notes without a notebook.
+	await _search_spot(world, cfg, "stove")
+	check(ui.popup_open and ui.popup_title == "공책이 없다." and ui.popup_body.contains(cfg["notes"]["note_1"]) and same(ui.popup_choices, ["버린다", "던져버린다"]), "a note with no notebook: its text, 공책이 없다., 버린다 / 던져버린다")
+	await _press("confirm")
+	check(not ui.is_open and not gs.is_collected(MAP_KEY, "stove:note") and gs.notes.is_empty() and gs.destroyed_notes.is_empty(), "버린다 leaves the note lying there")
+	await _search_spot(world, cfg, "stove")
+	await _press("ui_down")
+	await _press("confirm")
+	check(gs.destroyed_notes == ["note_1"] and gs.is_collected(MAP_KEY, "stove:note") and gs.notes.is_empty(), "던져버린다 destroys the note at once and counts it as taken")
+	await _search_spot(world, cfg, "stove")
+	check(world._text_open and world._text_label.text == cfg["lines"]["searched"], "...the spot is searched")
+	await _close_text(world)
+	gs.save_game()
+	var reloaded := make_gs()
+	reloaded.save_path = gs.save_path
+	check(reloaded.load_game() == OK and reloaded.destroyed_notes == ["note_1"] and reloaded.is_collected(MAP_KEY, "stove:note"), "a destroyed note stays destroyed after a reload")
+	reloaded.free()
+	var never := true
+	for seed in 60:
+		var deal := DealerScript.deal(cfg["spots"], cfg["budgets"]["sat"], cfg["extras"], seed, [], gs.notes_unavailable(), "sat")
+		for id in deal:
+			never = never and not (deal[id]["kind"] == "note" and deal[id]["note_id"] == "note_1")
+	check(never, "...and the spot dealer never offers it again")
+
+	# Health items with a bag: stored, then "<bag>이 꽉 찼다."
+	gs.give_item("pencil_case")
+	world.layout = {"cabinet": bandage, "stove": medicine, "lectern": bandage, "back_chair": bandage, "shoe_rack": bandage, "sandbox": medicine}
+	gs.collected.clear()
+	for id in ["cabinet", "stove", "lectern", "back_chair"]:
+		await _search_spot(world, cfg, id)
+	check(gs.inventory["bag_items"].size() == 4 and not ui.is_open and gs.is_collected(MAP_KEY, "back_chair:health"), "four health items fill a 필통")
+	await _search_spot(world, cfg, "shoe_rack")
+	check(ui.popup_open and ui.popup_title == "필통이 꽉 찼다." and same(ui.popup_choices, ["지금 쓴다", "버린다"]), "a full 필통: 필통이 꽉 찼다. with the same two choices")
+	await _press("ui_down")
+	await _press("confirm")
+	check(not gs.is_collected(MAP_KEY, "shoe_rack:health") and gs.inventory["bag_items"].size() == 4, "버린다: left at the spot")
+
+	# Notes with a notebook: room, then full.
+	gs.give_item("notebook")
+	world.layout["stove"] = note
+	gs.collected.erase(MAP_KEY)
+	gs.destroyed_notes.clear()
+	await _search_spot(world, cfg, "stove")
+	check(ui.popup_open and ui.popup_title == "" and same(ui.popup_choices, ["공책에 넣는다", "버린다"]) and ui.popup_body.contains(cfg["notes"]["note_1"]), "a note with room in the notebook: its text, 공책에 넣는다 / 버린다")
+	await _press("ui_down")
+	await _press("confirm")
+	check(gs.notes.is_empty() and not gs.is_collected(MAP_KEY, "stove:note"), "버린다 keeps nothing and leaves it")
+	await _search_spot(world, cfg, "stove")
+	await _press("confirm")
+	check(gs.notes == ["note_1"] and gs.is_collected(MAP_KEY, "stove:note"), "공책에 넣는다 writes it on a page")
+	gs.keep_note("note_2")
+	gs.keep_note("note_3")
+	world.layout["back_chair"] = {"kind": "note", "note_id": "note_4"}
+	world.spawn_config["notes"]["note_4"] = "[test] a fourth note"
+	gs.collected[MAP_KEY].erase("back_chair:health")
+	await _search_spot(world, cfg, "back_chair")
+	check(ui.popup_open and ui.popup_title == "공책이 꽉 찼다." and same(ui.popup_choices, ["버린다", "던져버린다"]), "a full notebook: 공책이 꽉 찼다. with 버린다 / 던져버린다")
+	await _press("confirm")
+
+	# Tab opens the inventory only when there is something in it, and only when free.
+	await _stop_world(world)
+	world = await _start_world()
+	ui = world.item_ui
+	gs.new_game()
+	world.layout = {}
+	await _ikey(KEY_TAB)
+	check(not ui.is_open, "Tab does nothing before 보람 owns a bag or a notebook")
+	gs.give_item("pencil_case")
+	await _ikey(KEY_TAB)
+	check(ui.is_open and ui.inventory_open and world.player.movement_locked, "Tab opens the inventory and locks movement")
+	await _ikey(KEY_TAB)
+	check(not ui.is_open and not world.player.movement_locked, "Tab closes it")
+	await _ikey(KEY_TAB)
+	await _ikey(KEY_ESCAPE)
+	check(not ui.is_open, "Esc closes it too")
+	world._text_open = true
+	world.update_lock()
+	await _ikey(KEY_TAB)
+	check(not ui.is_open, "Tab does nothing while a text box is up")
+	world._text_open = false
+	world.update_lock()
+	world.dialogue_box.is_open = true
+	world.update_lock()
+	await _ikey(KEY_TAB)
+	await _ikey(KEY_E)
+	check(not ui.is_open, "Tab does nothing in dialogue")
+	world.dialogue_box.is_open = false
+	world.update_lock()
+
+	# The inventory's entries and actions.
+	gs.give_item("bandage")
+	gs.give_item("red_medicine")
+	gs.give_item("notebook")
+	gs.keep_note("note_2")
+	gs.damage(6)
+	await _ikey(KEY_TAB)
+	check(ui.entries.size() == 3 and ui.entries[0]["id"] == "bandage" and ui.entries[1]["id"] == "red_medicine" and ui.entries[2]["type"] == "note", "the inventory lists the bag's items and the notebook's notes")
+	await _press("ui_down")
+	check(ui.inventory_selected == 1, "S moves down the list")
+	await _press("ui_up")
+	await _press("confirm")
+	check(ui.popup_open and same(ui.popup_choices, ["쓴다", "버린다"]), "a health item offers 쓴다 / 버린다")
+	await _press("confirm")
+	check(gs.hearts_halves == 5 and gs.inventory["bag_items"] == ["red_medicine"] and ui.inventory_open and not ui.popup_open, "쓴다 heals and takes it out of the bag")
+	await _press("confirm")
+	await _press("ui_down")
+	await _press("confirm")
+	check(gs.inventory["bag_items"].is_empty() and gs.dropped.size() == 1 and gs.dropped[0]["kind"] == "item" and gs.dropped[0]["id"] == "red_medicine" and gs.dropped[0]["room"] == world.room_id, "버린다 puts it down where 보람 stands")
+	check(world.room.find_children("Dropped_red_medicine", "Area3D", true, false).size() == 1, "...as a pick-up in the room")
+	# Full hearts: 쓴다 does nothing.
+	gs.give_item("bandage")
+	gs.hearts_halves = gs.hearts_max_halves
+	await _press("confirm")
+	await _press("confirm")
+	check(ItemUI.last_toast == "아픈 데가 없다." and gs.inventory["bag_items"] == ["bandage"], "쓴다 at full hearts: 아픈 데가 없다., the item stays")
+	# Notes (the player has stepped aside, so the two drops do not share a spot).
+	world.player.place(world.player.position.x + 2.0, 0)
+	await _press("ui_down")
+	await _press("confirm")
+	check(ui.popup_open and same(ui.popup_choices, ["읽는다", "버린다", "던져버린다"]), "a note offers 읽는다 / 버린다 / 던져버린다")
+	await _press("confirm")
+	check(ui.popup_open and ui.popup_choices.is_empty() and ui.popup_body == cfg["notes"]["note_2"], "읽는다 shows the note")
+	await _press("confirm")
+	check(ui.inventory_open and not ui.popup_open, "...and Enter goes back to the inventory")
+	await _press("confirm")
+	await _press("ui_down")
+	await _press("confirm")
+	check(gs.notes.is_empty() and gs.dropped.size() == 2 and gs.dropped[1]["kind"] == "note", "버린다 on a note puts it down")
+	gs.keep_note("note_3")
+	await _press("ui_down")
+	await _press("confirm")
+	await _press("ui_down")
+	await _press("ui_down")
+	await _press("confirm")
+	check(gs.notes.is_empty() and gs.destroyed_notes.has("note_3") and gs.dropped.size() == 2, "던져버린다 destroys it, nothing lands on the floor")
+	await _ikey(KEY_TAB)
+	check(not ui.is_open, "the inventory closed")
+
+	# Dropped things stay across rooms, can be picked up again, and are gone when the day changes.
+	var drop_room: String = gs.dropped[0]["room"]
+	world._load_room("classroom_1_3" if drop_room != "classroom_1_3" else "hallway_1f", "")
+	check(world.room.find_children("Dropped_*", "Area3D", true, false).is_empty() or drop_room == world.room_id, "a dropped item is only in its own room")
+	world._load_room(drop_room, "")
+	check(world.room.find_children("Dropped_red_medicine", "Area3D", true, false).size() == 1, "a dropped item is still there after leaving the room and coming back")
+	var spot: Node3D = world.room.find_children("Dropped_red_medicine", "Area3D", true, false)[0]
+	world.player.place(spot.position.x, 0)
+	await _until(func(): return world.player.current_interactable != null)
+	check(world.player.current_interactable == spot, "...and 보람 can reach it")
+	await _press("confirm")
+	check(gs.inventory["bag_items"].has("red_medicine") and gs.dropped.size() == 1 and not ui.is_open, "picking it up puts it back in the 필통")
+	check(world.room.find_children("Dropped_red_medicine", "Area3D", true, false).is_empty(), "...and it is no longer on the floor")
+	gs.leave_map()
+	check(gs.dropped.is_empty() and gs.destroyed_notes.has("note_2"), "leaving the map clears what lay on the floor, notes for good")
+	world._load_room(drop_room, "")
+	check(world.room.find_children("Dropped_*", "Area3D", true, false).is_empty(), "...nothing is dropped in the next day")
+
+	# Quick heal on the map.
+	gs.new_game()
+	gs.give_item("pencil_case")
+	gs.give_item("red_medicine")
+	gs.give_item("bandage")
+	gs.give_item("bandage")
+	gs.damage(6)
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == 5 and same(gs.inventory["bag_items"], ["red_medicine", "bandage"]), "E uses 반창고 first (lowest_first)")
+	await _ikey(KEY_E)
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == 8 and gs.inventory["bag_items"].is_empty(), "...then 빨간약")
+	await _ikey(KEY_E)
+	check(ItemUI.last_toast.begins_with("Nothing") and gs.hearts_halves == 8, "E with nothing to use shows a hint")
+	gs.quick_heal_order = "highest_first"
+	gs.give_item("bandage")
+	gs.give_item("red_medicine")
+	gs.damage(4)
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == 6 and gs.inventory["bag_items"] == ["bandage"], "highest_first: 빨간약 first")
+	gs.hearts_halves = gs.hearts_max_halves
+	await _ikey(KEY_E)
+	check(ItemUI.last_toast == "아픈 데가 없다." and gs.inventory["bag_items"] == ["bandage"], "E at full hearts: 아픈 데가 없다., nothing used")
+	gs.damage(4)
+	world.dialogue_box.is_open = true
+	world.update_lock()
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == gs.hearts_max_halves - 4 and gs.inventory["bag_items"] == ["bandage"], "E is ignored in dialogue")
+	world.dialogue_box.is_open = false
+	world.update_lock()
+	await _ikey(KEY_TAB)
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == gs.hearts_max_halves - 4, "E is ignored while the inventory is open")
+	await _ikey(KEY_TAB)
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == gs.hearts_max_halves - 3 and gs.inventory["bag_items"].is_empty(), "...and works again once it is closed")
+
+	# A downgrade asks which items to drop (one at a time).
+	gs.new_game()
+	gs.give_item("school_bag")
+	gs.give_item("pencil_case")
+	for i in 6:
+		gs.give_item("bandage")
+	gs.give_item("red_medicine")
+	gs.give_item("red_medicine")
+	world.swap_bag("pencil_case")
+	check(ui.popup_open and ui.popup_title.begins_with("Drop which?") and ui.popup_choices.size() == 8 and ui.popup_choices[0] == "반창고", "a downgrade asks what to drop, naming the items")
+	for i in 4:
+		await _press("confirm")
+	check(not ui.is_open and gs.inventory["bag"] == "pencil_case" and gs.inventory["bag_items"].size() == 4 and gs.dropped.size() == 4, "...until the rest fits: 4 kept, 4 on the floor")
+	gs.leave_map()
+
+	# Dev args: --give.
+	gs.new_game()
+	world.give_dev(["pencil_case", "notebook", "bandage", "bogus", "bandage"])
+	check(gs.inventory["bag"] == "pencil_case" and gs.inventory["notebook"] == "notebook" and gs.inventory["bag_items"] == ["bandage", "bandage"], "--give hands over containers and puts health items in them")
+	gs.quick_heal_order = "lowest_first"
+	await _stop_world(world)
+
+
+func _test_items_fight() -> void:
+	print("Items (the fight)")
+	var gs := _gs()
+	gs.new_game()
+	gs.quick_heal_order = "lowest_first"
+	gs.give_item("pencil_case")
+	gs.give_item("red_medicine")
+	gs.give_item("bandage")
+	gs.begin_fight("eunju")
+	var fight := _make_fight()
+	await _frames(2)
+	check(fight.play_to_freeze() and fight.state == fight.State.FREEZE, "a blank's freeze")
+	gs.damage(4)
+	var left_before: float = fight.freeze_left
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == 7 and same(gs.inventory["bag_items"], ["red_medicine"]), "E in a freeze uses a 반창고")
+	fight.step(0.5)
+	check(fight.state == fight.State.FREEZE and is_equal_approx(fight.freeze_left, left_before - 0.5), "...and the countdown keeps running")
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == 9 and gs.inventory["bag_items"].is_empty(), "E again uses the 빨간약")
+	await _ikey(KEY_E)
+	check(ItemUI.last_toast.begins_with("Nothing") and gs.hearts_halves == 9, "nothing left: a hint")
+	gs.give_item("bandage")
+	gs.hearts_halves = gs.hearts_max_halves
+	await _ikey(KEY_E)
+	check(ItemUI.last_toast == "아픈 데가 없다." and gs.inventory["bag_items"] == ["bandage"], "E at full hearts does nothing")
+	fight.pick_wrong()
+	check(gs.hearts_halves == gs.hearts_max_halves - 2, "a wrong answer still costs a heart")
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == gs.hearts_max_halves - 1 and gs.inventory["bag_items"].is_empty(), "E works during the beat too")
+	fight.queue_free()
+	await _frames(2)
+
+	# Highest first, in the fight.
+	gs.new_game()
+	gs.quick_heal_order = "highest_first"
+	gs.give_item("pencil_case")
+	gs.give_item("bandage")
+	gs.give_item("red_medicine")
+	gs.damage(6)
+	gs.begin_fight("eunju")
+	fight = _make_fight()
+	await _frames(2)
+	await _ikey(KEY_E)
+	check(gs.hearts_halves == 6 and gs.inventory["bag_items"] == ["bandage"], "highest_first in a fight: 빨간약 first")
+	fight.queue_free()
+	await _frames(2)
+
+	# Healing never counts against a revenge win; the 필통 comes with it.
+	gs.new_game()
+	gs.quick_heal_order = "lowest_first"
+	gs.begin_fight("eunju")
+	fight = _make_fight()
+	await _frames(2)
+	gs.give_item("pencil_case")
+	gs.give_item("bandage")
+	var n := 0
+	while fight.state != fight.State.RESULT and n < 40:
+		fight.play_to_freeze()
+		if fight.state != fight.State.FREEZE:
+			break
+		if n == 2:
+			gs.damage(3)
+			await _ikey(KEY_E)
+		fight.pick_right()
+		fight.finish_beat()
+		n += 1
+	for i in 200:
+		if fight.state == fight.State.RESULT:
+			break
+		fight.step(0.05)
+	check(fight.state == fight.State.RESULT and fight.last_result["outcome"] == "revenge" and fight.last_result["score"] == 100, "healing during the fight did not cost the revenge win")
+	check(gs.inventory["bag"] == "pencil_case" and gs.inventory["bag_items"].is_empty() and gs.last_rewards.is_empty(), "...the 필통 already held is not handed out twice")
+	fight.queue_free()
+	await _frames(2)
+
+	# Revenge with no bag: the 필통, and the card says so.
+	gs.new_game()
+	gs.begin_fight("eunju")
+	fight = _make_fight()
+	await _frames(2)
+	fight.run_scripted(func(_n): return true)
+	for i in 200:
+		if fight.state == fight.State.RESULT:
+			break
+		fight.step(0.05)
+	check(fight.last_result["outcome"] == "revenge" and gs.inventory["bag"] == "pencil_case" and gs.last_rewards == ["pencil_case"], "revenge against 은주 with no bag: a 필통")
+	check(fight._card_body.text.contains("필통"), "...named on the revenge card")
+	fight.queue_free()
+	await _frames(2)
+	gs.new_game()
+	gs.begin_fight("eunju")
+	fight = _make_fight()
+	await _frames(2)
+	fight.run_scripted(func(n): return n != 3)
+	for i in 200:
+		if fight.state == fight.State.RESULT:
+			break
+		fight.step(0.05)
+	check(fight.last_result["outcome"] == "survival" and not gs.has_bag(), "a survival win gives no 필통")
+	fight.queue_free()
+	await _frames(2)
+
+	# A retry restores the inventory to how it was at the fight start.
+	var world: Node = await _start_world()
+	gs.new_game()
+	gs.give_item("pencil_case")
+	gs.give_item("bandage")
+	gs.give_item("bandage")
+	gs.give_item("notebook")
+	gs.keep_note("note_2")
+	var f2: Node3D = world.start_fight("eunju", "", false, true)
+	await _frames(2)
+	check(gs.fight_snapshot["inventory"]["bag_items"].size() == 2 and gs.fight_snapshot["notes"] == ["note_2"], "start_fight snapshots the inventory")
+	f2.play_to_freeze()
+	f2.pick_wrong()
+	f2.finish_beat()
+	await _ikey(KEY_E)
+	check(gs.inventory["bag_items"].size() == 1 and gs.hearts_halves == gs.hearts_max_halves - 1, "a 반창고 used in the fight")
+	var guard := 0
+	while f2.state != f2.State.GAME_OVER and guard < 40:
+		f2.play_to_freeze()
+		f2.pick_wrong()
+		f2.finish_beat()
+		guard += 1
+	check(f2.state == f2.State.GAME_OVER, "the fight is lost")
+	f2.retry()
+	check(f2.state != f2.State.GAME_OVER and gs.inventory["bag_items"].size() == 2 and gs.hearts_halves == gs.hearts_max_halves and gs.notes == ["note_2"], "다시 부른다 brings the inventory back to the fight start")
+	await _stop_world(world)
+	gs.quick_heal_order = "lowest_first"

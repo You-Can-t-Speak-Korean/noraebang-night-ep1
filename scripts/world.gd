@@ -24,6 +24,12 @@
 #   user://sandbox/ and never touch the real one.
 #   Dev only: --nunchi N sets the 눈치 (0-cap); --known a,b makes the fight's boss know those
 #   card ids (loaded blanks and taunts).
+#   Capture the item screens (no-bag popup, note popup without a notebook, a 필통 inventory,
+#   a 책가방 holding a 필통):
+#     godot --path . -- --capture-items
+#   Dev only: --give pencil_case,notebook,bandage hands those items over after launch (a container is
+#   equipped, a health item put in a bag); --heal-order lowest_first|highest_first sets the E
+#   quick-heal order for this run only (the setting itself lives in user://settings.cfg).
 #   Dev only: --hearts N sets the hearts after launch (0.5-5, half steps);
 #   --skip-to scene_01|sat_roam|scene_02|mon_walk|mon_roam (mon = scene_02) jumps to
 #   that progress step; --no-labels starts with the name labels off (F9 toggles).
@@ -42,6 +48,7 @@ const DirectorScript := preload("res://scripts/scene_director.gd")
 const SpawnDealerScript := preload("res://scripts/spawn_dealer.gd")
 const TuningScript := preload("res://scripts/tuning.gd")
 const KeyPromptScript := preload("res://scripts/key_prompt.gd")
+const InteractableScript := preload("res://maps/interactable.gd")
 const FightScene := preload("res://scenes/fight.tscn")
 const SKIP_TARGETS: Array[String] = ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon"]
 const MONDAY_CARD := "1979년 10월 29일 월요일"
@@ -80,6 +87,8 @@ var death_spawn := ""
 var spawn_config: Dictionary = {}
 var layout: Dictionary = {}
 var hud: CanvasLayer
+## Popups, the inventory (Tab) and toasts (Build 5a).
+var item_ui: ItemUI
 var dialogue_box: CanvasLayer
 var director: Node
 ## Off: no Scene 01 and no progress handling; the world starts in the start room.
@@ -117,6 +126,11 @@ var _text_open := false
 
 func _ready() -> void:
 	_build_ui()
+	item_ui = ItemUI.new()
+	item_ui.opened.connect(update_lock)
+	item_ui.closed.connect(update_lock)
+	item_ui.dropped.connect(_on_item_dropped)
+	add_child(item_ui)
 	var data = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))
 	if typeof(data) != TYPE_DICTIONARY:
 		push_error("World: could not read %s" % MAP_DATA)
@@ -131,9 +145,10 @@ func _ready() -> void:
 	progress_unlocked = data.get("progress_unlocked", {})
 	home_exit = data.get("home_exit", {})
 	spawn_config = SpawnDealerScript.load_config()
+	item_ui.note_texts = spawn_config.get("notes", {})
 	var args := parse_launch_args(OS.get_cmdline_user_args())
 	_forced_seed = args["seed"]
-	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"] or args["capture_fight"]
+	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"] or args["capture_fight"] or args["capture_items"]
 	labels_visible = not args["no_labels"]
 	capture_mode = capturing
 	if capturing:
@@ -145,6 +160,10 @@ func _ready() -> void:
 		set_hearts_dev(args["hearts_halves"])
 	if args["nunchi"] != -1:
 		set_nunchi_dev(args["nunchi"])
+	if args["heal_order"] != "":
+		GameState.quick_heal_order = args["heal_order"]
+	if not args["give"].is_empty():
+		give_dev(args["give"])
 	if not args["known"].is_empty():
 		set_known_dev(args["known"], args["fight"] if args["fight"] != "" else GameState.current_boss)
 	if args["mark_song"] != "":
@@ -190,6 +209,8 @@ func _ready() -> void:
 		_run_capture_alley()
 	elif args["capture_rooms"]:
 		_run_capture_rooms()
+	elif args["capture_items"]:
+		_run_capture_items()
 	elif begin_progress:
 		begin()
 
@@ -198,13 +219,15 @@ func _ready() -> void:
 ## "capture_dialogue": bool, "capture_alley": bool, "capture_rooms": bool, "no_labels": bool,
 ## "capture_fight": bool, "fight": String boss id ("" = none), "fight_auto": "" | "right" | "wrong" | "mixed",
 ## "no_audio": bool, "check_song": String boss id ("" = none), "mark_song": String boss id ("" = none), "hearts_halves": int (-1 = none), "skip_to": String ("" = none),
-## "nunchi": int (-1 = none), "known": Array[String] card ids}
+## "nunchi": int (-1 = none), "known": Array[String] card ids, "capture_items": bool,
+## "give": Array[String] item ids, "heal_order": "" | "lowest_first" | "highest_first"}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
 			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args, "capture_rooms": "--capture-rooms" in args,
 			"capture_fight": "--capture-fight" in args, "fight": "", "fight_auto": "",
-			"no_labels": "--no-labels" in args, "no_audio": "--no-audio" in args, "check_song": "", "mark_song": "", "hearts_halves": -1, "skip_to": "", "nunchi": -1, "known": []}
+			"no_labels": "--no-labels" in args, "no_audio": "--no-audio" in args, "check_song": "", "mark_song": "", "hearts_halves": -1, "skip_to": "", "nunchi": -1, "known": [],
+			"capture_items": "--capture-items" in args, "give": [], "heal_order": ""}
 	var at := args.find("--seed")
 	if at != -1:
 		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
@@ -254,6 +277,20 @@ static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 					parsed["known"].append(card.strip_edges())
 		else:
 			push_warning("World: --known needs card ids like dad_country,mom_salary; ignoring it")
+	at = args.find("--give")
+	if at != -1:
+		if at + 1 < args.size() and not args[at + 1].begins_with("--"):
+			for id in args[at + 1].split(","):
+				if id.strip_edges() != "":
+					parsed["give"].append(id.strip_edges())
+		else:
+			push_warning("World: --give needs item ids like pencil_case,notebook,bandage; ignoring it")
+	at = args.find("--heal-order")
+	if at != -1:
+		if at + 1 < args.size() and Settings.HEAL_ORDERS.has(args[at + 1]):
+			parsed["heal_order"] = args[at + 1]
+		else:
+			push_warning("World: --heal-order needs one of %s; ignoring it" % str(Settings.HEAL_ORDERS))
 	at = args.find("--skip-to")
 	if at != -1:
 		if at + 1 < args.size() and SKIP_TARGETS.has(args[at + 1]):
@@ -303,6 +340,21 @@ func set_hearts_dev(halves: int) -> void:
 func set_nunchi_dev(n: int) -> void:
 	GameState.nunchi = clampi(n, 0, GameState.nunchi_cap)
 	GameState.nunchi_changed.emit(GameState.nunchi)
+
+
+## Dev only (--give): hands these items over in order. A container is equipped (or nested, or the
+## bag swapped with a choice of what to drop); a health item goes in a bag with room.
+func give_dev(ids: Array) -> void:
+	for id in ids:
+		if not Items.exists(id):
+			push_warning("World: --give: '%s' is not an item id; ignoring it" % id)
+		elif Inventory.give_result(GameState.inventory, id) == "swap":
+			if player == null:
+				push_warning("World: --give: '%s' would replace the bag, which needs the map; ignoring it" % id)
+			else:
+				swap_bag(id)
+		elif not GameState.give_item(id):
+			push_warning("World: --give: could not give '%s' (already carried, or no room)" % id)
 
 
 ## Dev only (--known): `boss` knows these cards (they leave the hand, as when lost to her).
@@ -436,7 +488,8 @@ func update_lock() -> void:
 		return
 	var scene_locked: bool = director != null and director.scene_locked
 	var dialogue_open: bool = dialogue_box != null and dialogue_box.is_open
-	player.movement_locked = _text_open or transitioning or _game_over or scene_locked or dialogue_open or end_card_shown
+	var items_open: bool = item_ui != null and item_ui.is_open
+	player.movement_locked = _text_open or transitioning or _game_over or scene_locked or dialogue_open or end_card_shown or items_open
 	_sync_key_prompt()
 
 
@@ -444,7 +497,10 @@ func update_lock() -> void:
 func _sync_key_prompt() -> void:
 	if key_prompt == null or not is_instance_valid(key_prompt) or player == null:
 		return
-	key_prompt.point_at(player.current_interactable, not player.movement_locked)
+	var target = player.current_interactable
+	if target != null and not is_instance_valid(target):
+		target = null  # a dropped item that was just picked up
+	key_prompt.point_at(target, not player.movement_locked)
 
 
 func close_text() -> void:
@@ -493,7 +549,7 @@ func deal_layout() -> void:
 		layout = {}
 		return
 	layout = SpawnDealerScript.deal(spawn_config["spots"], budgets[day], spawn_config["extras"],
-			GameState.spawn_seed, GameState.collected.get(collected_key(), []), GameState.notes, day)
+			GameState.spawn_seed, GameState.collected.get(collected_key(), []), GameState.notes_unavailable(), day)
 
 
 func autosave() -> void:
@@ -569,10 +625,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
 		toggle_labels()
 		return
+	if event is InputEventKey and event.pressed and not event.echo and fight == null and player != null \
+			and (event.keycode == KEY_TAB or event.keycode == KEY_E):
+		if not player.movement_locked and not item_ui.is_open:
+			if event.keycode == KEY_TAB:
+				item_ui.open_inventory()
+			else:
+				ItemUI.do_quick_heal(self)
+		return
 	var clicked: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
 	if not (event.is_action_pressed("confirm") or clicked) or event.is_echo():
 		return
-	if transitioning or end_card_shown or player == null or (dialogue_box != null and dialogue_box.is_open):
+	if transitioning or end_card_shown or player == null or (dialogue_box != null and dialogue_box.is_open) or item_ui.is_open:
 		return
 	if _game_over:
 		restart_after_death()
@@ -597,7 +661,9 @@ func _close_text() -> void:
 
 
 func _on_interacted(source: Area3D) -> void:
-	if source.has_meta("talk_id"):
+	if source.has_meta("dropped_ref"):
+		_pick_up_dropped(source)
+	elif source.has_meta("talk_id"):
 		director.talk(source.get_meta("talk_id"))
 	elif source.has_method("is_door"):
 		if director != null and director.blocks_exits():
@@ -660,18 +726,20 @@ func _search(spot_id: String) -> void:
 		return
 	var entry: Dictionary = layout.get(spot_id, {"kind": "empty"})
 	var kind: String = entry["kind"]
+	if kind == "health" or kind == "note":
+		# Not searched for good until the item is taken: 버린다 leaves it lying at the spot.
+		var on_taken := func(): GameState.mark_collected(collected_key(), "%s:%s" % [spot_id, kind])
+		if kind == "health":
+			_offer_health(str(entry["item"]), on_taken)
+		else:
+			_offer_note(str(entry["note_id"]), on_taken)
+		return
 	GameState.mark_collected(collected_key(), "%s:%s" % [spot_id, kind])
 	var text: String = lines.get(kind, kind)
 	match kind:
 		"ddeok":
 			GameState.add_ddeok(entry["amount"])
 			text = text.format({"amount": entry["amount"]})
-		"note":
-			GameState.add_note(entry["note_id"])
-			text = text.format({"text": spawn_config["notes"].get(entry["note_id"], "")})
-		"health":
-			GameState.heal(entry["heal"])
-			text = text.format({"name": entry["name"], "heal": hearts_text(entry["heal"])})
 		"trap":
 			text = text.format({"name": entry["name"], "damage": hearts_text(entry["damage"])})
 	show_text(text)
@@ -679,6 +747,107 @@ func _search(spot_id: String) -> void:
 		_flash()
 		# May emit player_died; the game-over screen goes over the text.
 		GameState.damage(entry["damage"])
+
+
+# ── Pickups (Build 5a) ─────────────────────────────────────────────────
+
+## A health item found at a spot or on the ground. It goes into a container with room (with a small
+## cue); otherwise a popup: no bag -> 넣을 데가 없다., a full bag -> "<container>이/가 꽉 찼다.", with
+## [지금 쓴다] [버린다]. `on_taken` runs once the item is taken (stored, or used on the spot).
+func _offer_health(item_id: String, on_taken: Callable) -> void:
+	var name := Items.item_name(item_id)
+	if GameState.store_heal(item_id) != "":
+		on_taken.call()
+		item_ui.toast("%s [placeholder: put away]" % name)
+		return
+	var title := ItemUI.TXT_NO_ROOM
+	if GameState.has_bag():
+		var c := Items.item_name(Inventory.main_container(GameState.inventory))
+		title = "%s%s 꽉 찼다." % [c, Items.josa_i_ga(c)]
+	item_ui.show_popup(title, name, [ItemUI.CHOICE_USE_NOW, ItemUI.CHOICE_DROP], func(choice: int):
+		if choice == 0:
+			if GameState.apply_heal_item(item_id):
+				on_taken.call()
+			else:
+				item_ui.toast(ItemUI.TXT_NOT_HURT))
+
+
+## A note found at a spot or on the ground: its text first. With room in a notebook: [공책에 넣는다]
+## [버린다]; with no notebook (공책이 없다.) or a full one (공책이 꽉 찼다.): [버린다] [던져버린다].
+## 던져버린다 destroys it for good. `on_taken` runs when it is kept or thrown away.
+func _offer_note(note_id: String, on_taken: Callable) -> void:
+	var lines: Dictionary = spawn_config.get("lines", {})
+	var text := str(lines.get("note", "{text}")).format({"text": spawn_config["notes"].get(note_id, note_id)})
+	if GameState.can_keep_note():
+		item_ui.show_popup("", text, [ItemUI.CHOICE_KEEP_NOTE, ItemUI.CHOICE_DROP], func(choice: int):
+			if choice == 0 and GameState.keep_note(note_id):
+				on_taken.call())
+		return
+	var title := ItemUI.TXT_NOTEBOOK_FULL if GameState.has_notebook() else ItemUI.TXT_NO_NOTEBOOK
+	item_ui.show_popup(title, text, [ItemUI.CHOICE_DROP, ItemUI.CHOICE_THROW_AWAY], func(choice: int):
+		if choice == 1:
+			GameState.destroy_note(note_id)
+			on_taken.call())
+
+
+## Something put down from the inventory lies where 보람 stands until the day changes.
+func _on_item_dropped(kind: String, id: String) -> void:
+	if player == null:
+		return
+	GameState.dropped.append({"kind": kind, "id": id, "room": room_id, "x": snappedf(player.position.x, 0.01)})
+	_spawn_dropped(GameState.dropped[-1])
+
+
+## The pick-up spot for one dropped entry, if it lies in the room that is loaded.
+func _spawn_dropped(d: Dictionary) -> void:
+	if room == null or d["room"] != room_id:
+		return
+	var it = InteractableScript.new()
+	it.name = "Dropped_%s" % d["id"]
+	it.label_text = Items.item_name(d["id"]) if d["kind"] == "item" else "note"
+	it.size = Vector3(0.45, 0.3, 0.45)
+	it.color = Color(0.85, 0.75, 0.4) if d["kind"] == "item" else Color(0.9, 0.9, 0.85)
+	it.set_meta("dropped_ref", d)
+	it.position = Vector3(float(d["x"]), 0.0, room.lane_origin_z)
+	room.add_child(it)
+	it.interacted.connect(_on_interacted)
+	apply_labels()
+
+
+func _pick_up_dropped(source: Node) -> void:
+	var d: Dictionary = source.get_meta("dropped_ref")
+	var on_taken := func():
+		GameState.dropped.erase(d)
+		if is_instance_valid(source):
+			if player.current_interactable == source:
+				player.current_interactable = null
+			source.queue_free()
+	if d["kind"] == "item":
+		_offer_health(str(d["id"]), on_taken)
+	else:
+		_offer_note(str(d["id"]), on_taken)
+
+
+## Replaces the equipped bag with `new_id`. If the items no longer fit, the player chooses which
+## to put down, one at a time, until they do (the choice list names the items).
+func swap_bag(new_id: String) -> void:
+	var plan := Inventory.swap_plan(GameState.inventory, new_id)
+	if not plan["over"]:
+		Inventory.swap(GameState.inventory, new_id)
+		GameState.inventory_changed.emit()
+		return
+	var names: Array = []
+	for id in plan["items"]:
+		names.append(Items.item_name(id))
+	item_ui.show_popup("Drop which? [placeholder]", "", names, func(choice: int):
+		if choice < 0:
+			return
+		var id: String = plan["items"][choice]
+		var from_bag: bool = GameState.inventory["bag_items"].has(id)
+		GameState.inventory["bag_items" if from_bag else "case_items"].erase(id)
+		_on_item_dropped("item", id)
+		GameState.inventory_changed.emit()
+		swap_bag(new_id))
 
 
 func _flash() -> void:
@@ -698,6 +867,7 @@ func restart_after_death() -> void:
 	if director != null:
 		director.cancel()
 	GameState.death_reset()
+	item_ui.reset()
 	GameState.spawn_seed = _roll_seed()
 	deal_layout()
 	autosave()
@@ -736,6 +906,7 @@ func end_saturday() -> void:
 	_title_label.visible = true
 	if fade_time > 0.0:
 		await get_tree().create_timer(title_hold).timeout
+	GameState.leave_map()
 	GameState.map_day = "mon"
 	GameState.spawn_seed = _roll_seed()
 	deal_layout()
@@ -758,6 +929,7 @@ func end_monday() -> void:
 	_title_label.visible = true
 	if fade_time > 0.0:
 		await get_tree().create_timer(title_hold).timeout
+	GameState.leave_map()
 	GameState.set_progress("sat2_pending")
 	autosave()
 	_title_label.visible = false
@@ -807,6 +979,8 @@ func _load_room(id: String, spawn_name: String) -> void:
 	for it in room.find_children("*", "Area3D", true, false):
 		if it.has_method("interact"):
 			it.interacted.connect(_on_interacted)
+	for d in GameState.dropped:
+		_spawn_dropped(d)
 	if director != null:
 		director.room_loaded(id)
 	apply_labels()
@@ -1116,6 +1290,62 @@ func _run_capture_hud() -> void:
 	print("hud  %s  luminance %.4f" % [path, lum])
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if lum >= 0.01 else 1)
+
+
+## Four PNGs of the item screens (nothing is saved): the no-bag popup, a note popup without a
+## notebook, the inventory with a 필통, and a 책가방 holding a 필통.
+func _run_capture_items() -> void:
+	fade_time = 0.0
+	var ok := true
+	var shot := func(shot_name: String) -> bool:
+		for i in 8:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var path := "%s/%s.png" % [Shots.dir(), shot_name]
+		img.save_png(path)
+		img.convert(Image.FORMAT_RGB8)
+		img.resize(480, 270)
+		var lum := _mean_luminance(img)
+		print("%s  %s  luminance %.4f" % [shot_name, path, lum])
+		if lum < 0.01:
+			print("FAIL: %s is (nearly) black" % shot_name)
+			return false
+		return true
+	GameState.new_game()
+	GameState.damage(3)
+	hud.refresh()
+	_offer_health("bandage", func(): pass)
+	ok = await shot.call("items_no_bag") and ok
+	item_ui.reset()
+	var note_id: String = spawn_config["notes"].keys()[0]
+	_offer_note(note_id, func(): pass)
+	ok = await shot.call("items_note_no_notebook") and ok
+	item_ui.reset()
+	GameState.give_item("pencil_case")
+	GameState.give_item("notebook")
+	GameState.give_item("bandage")
+	GameState.give_item("red_medicine")
+	GameState.give_item("bandage")
+	GameState.keep_note(note_id)
+	item_ui.open_inventory()
+	ok = await shot.call("items_pencil_case") and ok
+	item_ui.reset()
+	GameState.inventory = Inventory.empty()
+	GameState.notes = []
+	GameState.give_item("pencil_case")
+	GameState.give_item("bandage")
+	GameState.give_item("red_medicine")
+	GameState.give_item("school_bag")
+	GameState.give_item("bandage")
+	GameState.give_item("bandage")
+	GameState.give_item("red_medicine")
+	GameState.give_item("notebook")
+	GameState.keep_note(note_id)
+	item_ui.open_inventory()
+	ok = await shot.call("items_school_bag") and ok
+	print("adapter: ", RenderingServer.get_video_adapter_name())
+	get_tree().quit(0 if ok else 1)
 
 
 func _mean_luminance(img: Image) -> float:

@@ -7,7 +7,7 @@
 	},
 	"extras": {
 		"note": {"kind": "note", "weight": 2},
-		"band_aid": {"kind": "health", "weight": 2, "name": "반창고", "heal": 1},
+		"bandage": {"kind": "health", "weight": 2, "name": "반창고", "heal": 1},
 		"red_medicine": {"kind": "health", "weight": 1, "name": "빨간약", "heal": 2}
 	},
 	"lines": {

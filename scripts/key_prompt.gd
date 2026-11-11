@@ -53,7 +53,7 @@ func _ready() -> void:
 
 ## Shows the cue above `target` (an Interactable), or hides it when `target` is
 ## null or `active` is false.
-func point_at(target: Node3D, active: bool) -> void:
+func point_at(target, active: bool) -> void:  # untyped: the target may have been freed since the last frame
 	visible = active and target != null and is_instance_valid(target)
 	if not visible:
 		return
