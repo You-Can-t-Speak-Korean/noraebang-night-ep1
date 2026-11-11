@@ -10,6 +10,8 @@
 # ("World: could not load the save ...").
 # Bad --seed / --hearts / --skip-to / --fight / --fight-auto values push_warnings by design.
 # The items tests push a warning for an unknown id in --give ('bogus'), by design.
+# The shop tests push_error for the test shop's 'nunchi' stock line (not an item) and push_warning for a bad --ddeok
+# and for --ddeok outside a sandbox launch, by design.
 # The load-time labels tests push_error ("SongLabels: labels bad_labels.txt do not apply ..."), the tap
 # tool tests push_warning (its on-screen problems), and a --mark-song without a boss warns, by design.
 #
@@ -91,6 +93,7 @@ func _initialize() -> void:
 	await _test_build_4ca()
 	await _test_build_4cb()
 	await _test_items_fight()
+	await _test_shop()
 	check(_real_song_md5s() == song_files_before, "the tests leave the real song JSON and labels file byte-identical")
 	check(FileAccess.get_file_as_bytes(project_path) == project_before, "the fight tests leave project.godot byte-identical")
 	check(FileAccess.file_exists(real_save) == real_existed and (not real_existed or FileAccess.get_file_as_bytes(real_save) == real_before), "the real save was never touched by the run")
@@ -291,7 +294,7 @@ func _test_resets() -> void:
 	print("Resets")
 	var gs := make_gs()
 	var defaults: Dictionary = gs._default_state()
-	check(defaults.size() == 21, "default state has all 21 saved fields")
+	check(defaults.size() == 22, "default state has all 22 saved fields")
 	_dirty(gs)
 	var died := watch(gs, ["state_reset"])
 	gs.death_reset()
@@ -355,7 +358,7 @@ func _test_saves() -> void:
 	check(not FileAccess.file_exists(gs.save_path + ".tmp"), "atomic write leaves no temp file")
 	check(not FileAccess.file_exists(gs.save_path + ".bak"), "no .bak on first save")
 	var env = JSON.parse_string(_read(gs.save_path))
-	check(env["game"] == "noraebang-night" and int(env["save_version"]) == 2 and env["state_version"] == "0.4", "envelope fields")
+	check(env["game"] == "noraebang-night" and int(env["save_version"]) == 3 and env["state_version"] == "0.4", "envelope fields")
 	check(not env["state"].has("leaks"), "leaks are not saved")
 
 	var other := make_gs()
@@ -5314,7 +5317,7 @@ func _test_items_pure() -> void:
 	var l := make_gs()
 	l.save_path = s.save_path
 	check(l.load_game() == OK and l.inventory == s.inventory and l.notes == ["note_2"] and l.destroyed_notes == ["note_1"] and l.dropped == s.dropped, "...and loads back the same: containers, nested 필통, notes, destroyed notes, dropped items")
-	check(GameStateScript.SAVE_VERSION == 2, "the save version is 2")
+	check(GameStateScript.SAVE_VERSION == 3, "the save version is 3 (5b added the shop stock)")
 	var old := {"game": "noraebang-night", "save_version": 1, "state_version": "0.4", "state": {"hearts_halves": 7, "ddeok": 4, "notes": ["note_1", "note_2"], "progress": "sat_roam"}}
 	_write(s.save_path, JSON.stringify(old))
 	var m := make_gs()
@@ -5791,3 +5794,273 @@ func _test_items_fight() -> void:
 	check(f2.state != f2.State.GAME_OVER and gs.inventory["bag_items"].size() == 2 and gs.hearts_halves == gs.hearts_max_halves and gs.notes == ["note_2"], "다시 부른다 brings the inventory back to the fight start")
 	await _stop_world(world)
 	gs.quick_heal_order = "lowest_first"
+
+
+# ── Build 5b: the 문방구 shop ───────────────────────────────────────────
+
+const SHOP := "act1_munbanggu"
+const SHOP_LINES := {
+	"enter": "어서 오세요.", "open": "뭐 줄까?", "bought": "옜다.", "not_enough": "돈이 모자라네.",
+	"sold_out": "그건 다 팔렸어.", "no_bag": "넣을 데가 없잖아. 필통부터 사 가.", "bag_full": "넣을 데가 없잖아.",
+	"close": "또 와라.",
+}
+
+
+func _shop_row(ui: ShopUI, item: String) -> int:
+	for i in ui.rows.size():
+		if ui.rows[i]["item"] == item:
+			return i
+	return -1
+
+
+func _test_shop() -> void:
+	print("Shop (Build 5b)")
+	var gs := _gs()
+	var WorldScript = load("res://scripts/world.gd")  # runtime load: needs the GameState autoload
+	gs.save_path = WORLD_SAVE_DIR + "/shop_save.json"
+	gs.new_game()
+	gs.quick_heal_order = "lowest_first"
+
+	# Data.
+	var data: Dictionary = Store.load_shop(SHOP)
+	var line_ok := true
+	for k in SHOP_LINES:
+		line_ok = line_ok and Store.line(SHOP, k) == SHOP_LINES[k]
+	check(line_ok, "the shop file has the approved lines, verbatim")
+	check(data["name"] == "문방구" and data["shopkeeper"]["name"] == "고옥분" and Store.speaker(SHOP) == "문방구 할머니", "문방구; shopkeeper 고옥분, shown as 문방구 할머니")
+	var stock_ok := Store.stock_entries(SHOP).size() == 4
+	for e in [["pencil_case", 3, 1], ["notebook", 1, 1], ["bandage", 1, 3], ["red_medicine", 2, 2]]:
+		stock_ok = stock_ok and Store.price(SHOP, e[0]) == e[1] and Store.starting_stock(SHOP).get(e[0]) == e[2] and Items.exists(e[0])
+	check(stock_ok, "stock: 필통 3x1, 공책 1x1, 반창고 1x3, 빨간약 2x2, all real item ids")
+	check(Store.shop_ids().has(SHOP) and gs.shop_stock.has(SHOP) and same(gs.shop_stock[SHOP], Store.starting_stock(SHOP)), "a new game starts with the full stock")
+	check(GameStateScript.SAVE_VERSION == 3, "save version 3")
+
+	# buy: not_enough, no_bag.
+	var r: Dictionary = Store.buy(SHOP, "pencil_case")
+	check(not r["ok"] and r["reason"] == "not_enough" and gs.ddeok == 0 and Store.stock_left(SHOP, "pencil_case") == 1 and not gs.has_bag(), "not_enough: nothing changes")
+	gs.add_ddeok(10)
+	r = Store.buy(SHOP, "bandage")
+	check(not r["ok"] and r["reason"] == "no_bag" and gs.ddeok == 10 and Store.stock_left(SHOP, "bandage") == 3, "no_bag: a bandage with no 필통; DDEOK and stock unchanged")
+	r = Store.buy(SHOP, "bogus_item")
+	check(not r["ok"] and r["reason"] == "unknown" and gs.ddeok == 10, "an item the shop does not sell: nothing changes")
+	r = Store.buy("no_such_shop", "bandage")
+	check(not r["ok"] and gs.ddeok == 10, "an unknown shop: nothing changes")
+
+	# A 필통 equips; health items go into it.
+	r = Store.buy(SHOP, "pencil_case")
+	check(r["ok"] and r["reason"] == "" and gs.ddeok == 7 and gs.inventory["bag"] == "pencil_case" and Store.stock_left(SHOP, "pencil_case") == 0, "buying a 필통 equips it, costs 3, stock 1 -> 0")
+	r = Store.buy(SHOP, "pencil_case")
+	check(not r["ok"] and r["reason"] == "sold_out" and gs.ddeok == 7, "sold_out: the 필통 again; DDEOK unchanged")
+	for i in 3:
+		r = Store.buy(SHOP, "bandage")
+	check(r["ok"] and gs.ddeok == 4 and gs.inventory["bag_items"].size() == 3 and Store.stock_left(SHOP, "bandage") == 0, "health items can now be bought into the 필통 (3 반창고)")
+	r = Store.buy(SHOP, "bandage")
+	check(not r["ok"] and r["reason"] == "sold_out" and gs.inventory["bag_items"].size() == 3, "sold_out: the 4th 반창고 (stock 0)")
+	r = Store.buy(SHOP, "red_medicine")
+	check(r["ok"] and gs.ddeok == 2 and gs.inventory["bag_items"].size() == 4 and Store.stock_left(SHOP, "red_medicine") == 1, "빨간약 fills the last slot")
+	r = Store.buy(SHOP, "red_medicine")
+	check(not r["ok"] and r["reason"] == "bag_full" and gs.ddeok == 2 and Store.stock_left(SHOP, "red_medicine") == 1 and gs.inventory["bag_items"].size() == 4, "bag_full: nothing spent, stock kept")
+	# A 공책 equips; a second one cannot (cannot_equip is checked on the test shop below).
+	r = Store.buy(SHOP, "notebook")
+	check(r["ok"] and gs.ddeok == 1 and gs.inventory["notebook"] == "notebook" and Store.stock_left(SHOP, "notebook") == 0, "buying a 공책 equips it")
+	check(gs.nunchi == 0, "buying never touched 눈치")
+
+	# Stock and DDEOK survive a save and reload; a reload never restocks.
+	check(gs.save_game() == OK, "saved")
+	gs.new_game()
+	check(gs.ddeok == 0 and Store.stock_left(SHOP, "bandage") == 3, "(a new game starts over)")
+	check(gs.load_game() == OK and gs.ddeok == 1 and Store.stock_left(SHOP, "bandage") == 0 and Store.stock_left(SHOP, "pencil_case") == 0 and Store.stock_left(SHOP, "red_medicine") == 1, "DDEOK and stock come back from the save")
+	check(gs.load_game() == OK and Store.stock_left(SHOP, "bandage") == 0 and Store.stock_left(SHOP, "red_medicine") == 1, "loading again never restocks")
+	var saved: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(gs.save_path))
+	check(int(saved["save_version"]) == 3 and int(saved["state"]["shop_stock"][SHOP]["red_medicine"]) == 1, "the save file holds the stock (version 3)")
+
+	# The death reset restores the starting stock with everything else.
+	gs.death_reset()
+	check(gs.ddeok == 0 and not gs.has_bag() and same(gs.shop_stock[SHOP], Store.starting_stock(SHOP)), "the death reset restores the starting stock (and clears DDEOK and the inventory)")
+
+	# Migration v2 -> v3, and a messy stock.
+	var old := {"game": "noraebang-night", "save_version": 2, "state_version": "0.4", "state": {"ddeok": 6, "progress": "sat_roam"}}
+	_write(gs.save_path, JSON.stringify(old))
+	DirAccess.remove_absolute(gs.save_path + ".bak")
+	check(gs.load_game() == OK and gs.ddeok == 6 and gs.progress == "sat_roam" and same(gs.shop_stock[SHOP], Store.starting_stock(SHOP)), "a version-2 save loads with the full starting stock")
+	check(same(gs._migrate_2_to_3({"ddeok": 1})["shop_stock"][SHOP], Store.starting_stock(SHOP)), "_migrate_2_to_3 gives full stock")
+	_write(gs.save_path, JSON.stringify({"game": "noraebang-night", "save_version": 3, "state_version": "0.4", "state": {"shop_stock": {SHOP: {"bandage": 2, "red_medicine": -4, "x": "bad"}, "other": 5}}}))
+	check(gs.load_game() == OK and Store.stock_left(SHOP, "bandage") == 2 and Store.stock_left(SHOP, "red_medicine") == 0 and Store.stock_left(SHOP, "pencil_case") == 1, "a messy stock is cleaned (negatives to 0, missing items start full)")
+
+	# No code path sells 눈치.
+	var bad_text := false
+	for path in ["res://scripts/store.gd", "res://scripts/shop_ui.gd", "res://data/shop/act1_munbanggu.json"]:
+		if FileAccess.file_exists(path):
+			var kept: Array = []
+			for ln in FileAccess.get_file_as_string(path).split("
+"):
+				if not ln.strip_edges().begins_with("#"):
+					kept.append(ln)
+			var text := "
+".join(kept).to_lower()  # comments may explain the rule; code and data may not break it
+			if path.ends_with(".json") and (text.contains("\"nunchi\"") or text.contains("눈치")):
+				bad_text = true
+			if path.ends_with(".gd") and (text.contains("nunchi") or text.contains("눈치")):
+				bad_text = true
+	check(not bad_text, "the code of store.gd and shop_ui.gd and the shop data never mention 눈치")
+	var methods := []
+	for m in Store.new().get_method_list():
+		methods.append(str(m["name"]))
+	var gs_shop_methods := ["spend_ddeok", "set_shop_stock"]
+	var nunchi_ok := true
+	for m in methods + gs_shop_methods:
+		nunchi_ok = nunchi_ok and not m.contains("nunchi")
+	check(nunchi_ok and Items.ids().find("nunchi") == -1, "no Store method and no item is about 눈치")
+	gs.new_game()
+	gs.add_nunchi(2)
+	gs.add_ddeok(100)
+	for item in Items.ids():
+		Store.buy(SHOP, item)
+	check(gs.nunchi == 2, "buying everything in the shop leaves 눈치 as it was")
+
+	# A second shop is only a data file.
+	Store.dir = "res://tests/data/shop"
+	Store.clear_cache()
+	gs.new_game()
+	check(Store.shop_ids() == ["test_shop"] and Store.exists("test_shop") and not Store.exists(SHOP), "the test directory holds one other shop")
+	check(Store.stock_entries("test_shop").size() == 3 and Store.price("test_shop", "nunchi") == -1, "its stock lists only real items (the 'nunchi' line is dropped)")
+	gs.add_ddeok(30)
+	r = Store.buy("test_shop", "bandage")
+	check(not r["ok"] and r["reason"] == "no_bag" and gs.ddeok == 30, "second shop: no_bag")
+	r = Store.buy("test_shop", "nunchi")
+	check(not r["ok"] and r["reason"] == "unknown" and gs.ddeok == 30 and gs.nunchi == 0, "second shop: 눈치 is not for sale even when the file lists it")
+	gs.give_item("pencil_case")
+	r = Store.buy("test_shop", "bandage")
+	check(r["ok"] and gs.ddeok == 25 and Store.stock_left("test_shop", "bandage") == 1 and gs.shop_stock["test_shop"]["bandage"] == 1, "second shop: a purchase works; its stock is kept per shop")
+	r = Store.buy("test_shop", "school_bag")
+	check(r["ok"] and gs.inventory["bag"] == "school_bag" and gs.inventory["case"] == "pencil_case" and gs.ddeok == 21, "second shop: a 책가방 upgrade (the 필통 moves inside)")
+	r = Store.buy("test_shop", "notebook")
+	r = Store.buy("test_shop", "notebook")
+	check(not r["ok"] and r["reason"] == "cannot_equip" and gs.ddeok == 20 and Store.stock_left("test_shop", "notebook") == 1, "cannot_equip: a second 공책; nothing spent")
+	Store.dir = Store.DEFAULT_DIR
+	Store.clear_cache()
+	gs.new_game()
+
+	# --ddeok.
+	check(WorldScript.parse_launch_args(PackedStringArray(["--ddeok", "7"]))["ddeok"] == 7, "--ddeok 7 parses")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--ddeok", "x"]))["ddeok"] == -1 and WorldScript.parse_launch_args(PackedStringArray(["--ddeok", "-3"]))["ddeok"] == -1, "a bad --ddeok is ignored")
+	check(WorldScript.parse_launch_args(PackedStringArray(["--capture-shop"]))["capture_shop"], "--capture-shop parses")
+
+	# The real UI.
+	var world: Node = await _start_world()
+	gs.new_game()
+	gs.save_path = WORLD_SAVE_DIR + "/save.json"
+	check(world.wants_sandbox_launch(), "this run is a sandbox launch")
+	world.set_ddeok_dev(5, false)
+	check(gs.ddeok == 0, "--ddeok is refused outside a sandbox")
+	world.set_ddeok_dev(3, true)
+	check(gs.ddeok == 3 and world.hud.ddeok_label.text == "3", "--ddeok N (sandbox) starts with N DDEOK, shown on the HUD")
+	var ui: ShopUI = world.shop_ui
+
+	# Entering the room: 「어서 오세요.」 once per visit, not blocking.
+	var greets := ShopUI.greet_count
+	world._load_room("alley", "")
+	check(ShopUI.greet_count == greets, "other rooms have no greeting")
+	world._load_room("stationery", "from_alley")
+	await _frames(3)
+	check(ShopUI.greet_count == greets + 1 and ShopUI.last_line == "어서 오세요." and ShopUI.last_speaker == "문방구 할머니" and ui._say_panel.visible, "entering the room: 어서 오세요. with the speaker label 문방구 할머니")
+	check(not ui.is_open and not world.player.movement_locked and not world.text_is_open(), "...it does not block: movement is free")
+	await _frames(10)
+	check(ShopUI.greet_count == greets + 1, "...and it is not repeated while 보람 stays")
+	world._load_room("alley", "")
+	world._load_room("stationery", "from_alley")
+	check(ShopUI.greet_count == greets + 2, "...but comes again on the next visit")
+	check(world.room.find_children("Shopkeeper", "Node3D", true, false).size() == 1, "the room has a placeholder shopkeeper")
+
+	# Walk to the counter; Enter opens the shop.
+	world.player.place(-3.0, 0)
+	var waited := 0
+	while (world.player.current_interactable == null or world.player.current_interactable.shop_id == "") and waited < 60:
+		await _frames(1)
+		waited += 1
+	await _frames(3)
+	var counter = world.player.current_interactable
+	check(counter != null and counter.shop_id == SHOP and world.key_prompt.visible, "at the counter: the counter is the target and the Enter keycap shows")
+	await _ikey(KEY_ENTER)
+	check(ui.is_open and ui.shop_id == SHOP and ui.panel_line == "뭐 줄까?" and ui._title.text == "문방구", "Enter at the counter opens the panel: 문방구, 뭐 줄까?")
+	check(world.player.movement_locked and ui.rows.size() == 4 and ui.selected == 0, "...movement is locked; four rows, the first selected")
+	var shown_names: Array = []
+	for i in 4:
+		shown_names.append(str(ui._row_labels[i]["name"].text).strip_edges().trim_prefix("▶ "))
+	check(same(shown_names, ["필통", "공책", "반창고", "빨간약"]) and ui._row_labels[2]["price"].text == "1" and ui._row_labels[3]["qty"].text == "×2" and ui._row_labels[2]["qty"].text == "×3", "rows: the Korean name, the price, the quantity left")
+	check(ui._row_labels[0]["icon"].get_script() == DdeokIconScript, "...each row has the 송편 DDEOK icon")
+	await _ikey(KEY_S)
+	check(ui.selected == 1, "S moves down")
+	await _ikey(KEY_W)
+	check(ui.selected == 0, "W moves up")
+
+	# Not enough (3 DDEOK buys the 필통 exactly; try the 빨간약 first with a 1-DDEOK purse).
+	gs.ddeok = 1
+	await _ikey(KEY_S)
+	await _ikey(KEY_S)
+	await _ikey(KEY_S)
+	await _ikey(KEY_ENTER)
+	check(ui.selected == 3 and ui.panel_line == "돈이 모자라네." and gs.ddeok == 1 and not ui.last_result["ok"], "not enough DDEOK: 돈이 모자라네.")
+	await _ikey(KEY_W)
+	await _ikey(KEY_ENTER)
+	check(ui.panel_line == "넣을 데가 없잖아. 필통부터 사 가." and gs.ddeok == 1, "a 반창고 with no bag: 넣을 데가 없잖아. 필통부터 사 가.")
+	gs.add_ddeok(2)
+	await _ikey(KEY_W)
+	await _ikey(KEY_W)
+	await _ikey(KEY_ENTER)
+	check(ui.panel_line == "옜다." and gs.inventory["bag"] == "pencil_case" and gs.ddeok == 0 and world.hud.ddeok_label.text == "0", "buying the 필통: 옜다.; it is equipped and the HUD count updated at once")
+	check(ui._row_labels[0]["qty"].text == "×0" and ui.row_sold_out(0), "...its row now reads ×0 and is greyed out")
+	await _ikey(KEY_ENTER)
+	check(ui.panel_line == "그건 다 팔렸어." and gs.ddeok == 0, "sold out: 그건 다 팔렸어.")
+	var saved2: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(gs.save_path))
+	check(int(saved2["state"]["shop_stock"][SHOP]["pencil_case"]) == 0 and int(saved2["state"]["ddeok"]) == 0, "a purchase saves the game")
+
+	# A click buys; the bag fills up: 넣을 데가 없잖아.
+	gs.add_ddeok(20)
+	var bandage_row := _shop_row(ui, "bandage")
+	var med_row := _shop_row(ui, "red_medicine")
+	await _click_at(ui._row_buttons[bandage_row].get_global_rect().get_center())
+	check(ui.panel_line == "옜다." and gs.inventory["bag_items"].size() == 1 and gs.ddeok == 19, "a click on a row buys it")
+	await _click_at(ui._row_buttons[bandage_row].get_global_rect().get_center())
+	await _click_at(ui._row_buttons[bandage_row].get_global_rect().get_center())
+	await _click_at(ui._row_buttons[med_row].get_global_rect().get_center())
+	check(gs.inventory["bag_items"].size() == 4 and ui.panel_line == "옜다.", "the 필통 is full: 4 items")
+	await _click_at(ui._row_buttons[med_row].get_global_rect().get_center())
+	check(ui.panel_line == "넣을 데가 없잖아." and gs.inventory["bag_items"].size() == 4 and Store.stock_left(SHOP, "red_medicine") == 1, "bag full: 넣을 데가 없잖아. (only the first sentence)")
+
+	# Tab and E do nothing with the panel up; a 공책 buy equips.
+	var hearts_before: int = gs.hearts_halves
+	gs.damage(2)
+	await _ikey(KEY_E)
+	await _ikey(KEY_TAB)
+	check(gs.hearts_halves == hearts_before - 2 and not world.item_ui.is_open and ui.is_open, "E and Tab do nothing while the shop is open")
+	await _click_at(ui._row_buttons[_shop_row(ui, "notebook")].get_global_rect().get_center())
+	check(gs.inventory["notebook"] == "notebook" and ui.panel_line == "옜다.", "buying the 공책 equips it")
+
+	# Esc closes with 또 와라.
+	await _ikey(KEY_ESCAPE)
+	check(not ui.is_open and ShopUI.last_line == "또 와라." and ShopUI.last_speaker == "문방구 할머니" and ui._say_panel.visible, "Esc closes the panel; 또 와라. with the speaker label")
+	check(not world.player.movement_locked, "...movement is free again")
+	await _ikey(KEY_ENTER)
+	check(ui.is_open and ui.panel_line == "뭐 줄까?" and Store.stock_left(SHOP, "bandage") == 0, "Enter at the counter opens it again; the stock is still gone")
+	await _ikey(KEY_ESCAPE)
+
+	# Leaving the room and coming back never restocks; a death reset does.
+	world._load_room("alley", "")
+	world._load_room("stationery", "from_alley")
+	check(Store.stock_left(SHOP, "bandage") == 0, "leaving the room and coming back never restocks")
+	world.player.place(-3.0, 0)
+	waited = 0
+	while (world.player.current_interactable == null or world.player.current_interactable.shop_id == "") and waited < 60:
+		await _frames(1)
+		waited += 1
+	await _frames(3)
+	await _ikey(KEY_ENTER)
+	check(ui.is_open, "(open once more)")
+	gs.player_died.emit()
+	await _frames(2)
+	world.restart_after_death()
+	await _frames(3)
+	check(not ui.is_open and Store.stock_left(SHOP, "bandage") == 3 and gs.ddeok == 0, "dying with the panel open closes it; the restart restores the stock")
+	await _stop_world(world)
+	_clean_world_saves()

@@ -17,7 +17,7 @@ signal state_reset
 signal inventory_changed
 
 const STATE_VERSION := "0.4"
-const SAVE_VERSION := 2
+const SAVE_VERSION := 3
 const GAME_ID := "noraebang-night"
 const OUTCOMES: Array[String] = ["revenge", "survival"]
 
@@ -68,6 +68,9 @@ var destroyed_notes: Array[String] = []
 ## Items put down from the inventory: [{"kind": "item" | "note", "id", "room", "x"}]. They vanish
 ## when Boram leaves the map (leave_map).
 var dropped: Array = []
+## shop id -> {item id: quantity left}. Per save: a reload never restocks; a death reset and a
+## migrated old save start from the shop files' quantities (Store.starting_stock_all).
+var shop_stock: Dictionary = {}
 var talked: Array[String] = []
 var owned_items: Array[String] = []
 var scores: Dictionary = {}            # boss -> int (best)
@@ -220,6 +223,25 @@ func add_ddeok(n: int) -> void:
 		return
 	ddeok += n
 	ddeok_changed.emit(ddeok)
+
+
+## Pays `n` DDEOK. False (and nothing changes) if n <= 0 or there is not enough. Only Store.buy calls this.
+func spend_ddeok(n: int) -> bool:
+	if n <= 0:
+		push_warning("GameState.spend_ddeok: n must be > 0 (got %d)" % n)
+		return false
+	if ddeok < n:
+		return false
+	ddeok -= n
+	ddeok_changed.emit(ddeok)
+	return true
+
+
+## Sets what a shop has left of one item. Only Store.buy calls this.
+func set_shop_stock(shop_id: String, item_id: String, left: int) -> void:
+	if not shop_stock.has(shop_id):
+		shop_stock[shop_id] = {}
+	shop_stock[shop_id][item_id] = maxi(left, 0)
 
 
 # ── 🔒 Secrets ─────────────────────────────────────────────────────────
@@ -514,6 +536,7 @@ func _default_state() -> Dictionary:
 		"inventory": Inventory.empty(),
 		"destroyed_notes": _str_array([]),
 		"dropped": [],
+		"shop_stock": Store.starting_stock_all(),
 		"talked": _str_array([]),
 		"owned_items": _str_array([]),
 		"scores": {},
@@ -643,6 +666,8 @@ func _migrate(state: Dictionary, from_version: int) -> Dictionary:
 			return _migrate_0_to_1(state)
 		1:
 			return _migrate_1_to_2(state)
+		2:
+			return _migrate_2_to_3(state)
 	push_error("GameState: no migration from save version %d" % from_version)
 	return state
 
@@ -660,6 +685,12 @@ func _migrate_1_to_2(state: Dictionary) -> Dictionary:
 	state["notes"] = []
 	state["destroyed_notes"] = []
 	state["dropped"] = []
+	return state
+
+
+## Version 3 added the shop: old saves get every shop's full starting stock.
+func _migrate_2_to_3(state: Dictionary) -> Dictionary:
+	state["shop_stock"] = Store.starting_stock_all()
 	return state
 
 
@@ -696,6 +727,14 @@ func _normalize(raw: Dictionary) -> Dictionary:
 					out[key] = _str_array(v)
 			"inventory":
 				out[key] = Inventory.normalize(v)
+			"shop_stock":
+				if typeof(v) == TYPE_DICTIONARY:
+					for shop in v:
+						if typeof(v[shop]) == TYPE_DICTIONARY:
+							out[key][str(shop)] = out[key].get(str(shop), {})
+							for item in v[shop]:
+								if typeof(v[shop][item]) == TYPE_INT or typeof(v[shop][item]) == TYPE_FLOAT:
+									out[key][str(shop)][str(item)] = maxi(int(v[shop][item]), 0)
 			"dropped":
 				if typeof(v) == TYPE_ARRAY:
 					for d in v:

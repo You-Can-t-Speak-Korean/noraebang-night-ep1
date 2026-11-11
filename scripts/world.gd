@@ -89,6 +89,8 @@ var layout: Dictionary = {}
 var hud: CanvasLayer
 ## Popups, the inventory (Tab) and toasts (Build 5a).
 var item_ui: ItemUI
+## The shop panel and the shopkeeper's speech line (Build 5b).
+var shop_ui: ShopUI
 var dialogue_box: CanvasLayer
 var director: Node
 ## Off: no Scene 01 and no progress handling; the world starts in the start room.
@@ -131,6 +133,11 @@ func _ready() -> void:
 	item_ui.closed.connect(update_lock)
 	item_ui.dropped.connect(_on_item_dropped)
 	add_child(item_ui)
+	shop_ui = ShopUI.new()
+	shop_ui.opened.connect(update_lock)
+	shop_ui.closed.connect(update_lock)
+	shop_ui.purchased.connect(func(_shop, _item): autosave())
+	add_child(shop_ui)
 	var data = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))
 	if typeof(data) != TYPE_DICTIONARY:
 		push_error("World: could not read %s" % MAP_DATA)
@@ -148,7 +155,7 @@ func _ready() -> void:
 	item_ui.note_texts = spawn_config.get("notes", {})
 	var args := parse_launch_args(OS.get_cmdline_user_args())
 	_forced_seed = args["seed"]
-	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"] or args["capture_fight"] or args["capture_items"]
+	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"] or args["capture_fight"] or args["capture_items"] or args["capture_shop"]
 	labels_visible = not args["no_labels"]
 	capture_mode = capturing
 	if capturing:
@@ -160,6 +167,8 @@ func _ready() -> void:
 		set_hearts_dev(args["hearts_halves"])
 	if args["nunchi"] != -1:
 		set_nunchi_dev(args["nunchi"])
+	if args["ddeok"] != -1:
+		set_ddeok_dev(args["ddeok"], wants_sandbox_launch())
 	if args["heal_order"] != "":
 		GameState.quick_heal_order = args["heal_order"]
 	if not args["give"].is_empty():
@@ -211,6 +220,8 @@ func _ready() -> void:
 		_run_capture_rooms()
 	elif args["capture_items"]:
 		_run_capture_items()
+	elif args["capture_shop"]:
+		_run_capture_shop()
 	elif begin_progress:
 		begin()
 
@@ -220,14 +231,14 @@ func _ready() -> void:
 ## "capture_fight": bool, "fight": String boss id ("" = none), "fight_auto": "" | "right" | "wrong" | "mixed",
 ## "no_audio": bool, "check_song": String boss id ("" = none), "mark_song": String boss id ("" = none), "hearts_halves": int (-1 = none), "skip_to": String ("" = none),
 ## "nunchi": int (-1 = none), "known": Array[String] card ids, "capture_items": bool,
-## "give": Array[String] item ids, "heal_order": "" | "lowest_first" | "highest_first"}
+## "ddeok": int (-1 = none), "capture_shop": bool, "give": Array[String] item ids, "heal_order": "" | "lowest_first" | "highest_first"}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
 			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args, "capture_rooms": "--capture-rooms" in args,
 			"capture_fight": "--capture-fight" in args, "fight": "", "fight_auto": "",
 			"no_labels": "--no-labels" in args, "no_audio": "--no-audio" in args, "check_song": "", "mark_song": "", "hearts_halves": -1, "skip_to": "", "nunchi": -1, "known": [],
-			"capture_items": "--capture-items" in args, "give": [], "heal_order": ""}
+			"capture_items": "--capture-items" in args, "give": [], "heal_order": "", "ddeok": -1, "capture_shop": "--capture-shop" in args}
 	var at := args.find("--seed")
 	if at != -1:
 		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
@@ -285,6 +296,12 @@ static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 					parsed["give"].append(id.strip_edges())
 		else:
 			push_warning("World: --give needs item ids like pencil_case,notebook,bandage; ignoring it")
+	at = args.find("--ddeok")
+	if at != -1:
+		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
+			parsed["ddeok"] = int(args[at + 1])
+		else:
+			push_warning("World: --ddeok needs a whole number >= 0; ignoring it")
 	at = args.find("--heal-order")
 	if at != -1:
 		if at + 1 < args.size() and Settings.HEAL_ORDERS.has(args[at + 1]):
@@ -334,6 +351,21 @@ func _start_game(ignore_save: bool) -> void:
 func set_hearts_dev(halves: int) -> void:
 	GameState.hearts_halves = clampi(halves, 0, GameState.hearts_max_halves)
 	GameState.hearts_changed.emit(GameState.hearts_halves)
+
+
+## True when this launch uses the throwaway save (the same test GameState uses for its path).
+func wants_sandbox_launch() -> bool:
+	return GameState.wants_sandbox(OS.get_cmdline_user_args(), OS.get_cmdline_args())
+
+
+## Dev only (--ddeok): starts with exactly `n` DDEOK. Refused outside a sandbox launch
+## (--sandbox, --fight-auto, any --capture*), so it never changes the real save.
+func set_ddeok_dev(n: int, sandboxed: bool) -> void:
+	if not sandboxed:
+		push_warning("World: --ddeok only works with --sandbox (or a capture mode); ignoring it")
+		return
+	GameState.ddeok = maxi(n, 0)
+	GameState.ddeok_changed.emit(GameState.ddeok)
 
 
 ## Dev only (--nunchi): sets the 눈치 directly, clamped to 0..cap.
@@ -488,7 +520,7 @@ func update_lock() -> void:
 		return
 	var scene_locked: bool = director != null and director.scene_locked
 	var dialogue_open: bool = dialogue_box != null and dialogue_box.is_open
-	var items_open: bool = item_ui != null and item_ui.is_open
+	var items_open: bool = (item_ui != null and item_ui.is_open) or (shop_ui != null and shop_ui.is_open)
 	player.movement_locked = _text_open or transitioning or _game_over or scene_locked or dialogue_open or end_card_shown or items_open
 	_sync_key_prompt()
 
@@ -627,7 +659,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and not event.echo and fight == null and player != null \
 			and (event.keycode == KEY_TAB or event.keycode == KEY_E):
-		if not player.movement_locked and not item_ui.is_open:
+		if not player.movement_locked and not item_ui.is_open and not shop_ui.is_open:
 			if event.keycode == KEY_TAB:
 				item_ui.open_inventory()
 			else:
@@ -636,7 +668,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	var clicked: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
 	if not (event.is_action_pressed("confirm") or clicked) or event.is_echo():
 		return
-	if transitioning or end_card_shown or player == null or (dialogue_box != null and dialogue_box.is_open) or item_ui.is_open:
+	if transitioning or end_card_shown or player == null or (dialogue_box != null and dialogue_box.is_open) or item_ui.is_open or shop_ui.is_open:
 		return
 	if _game_over:
 		restart_after_death()
@@ -676,6 +708,8 @@ func _on_interacted(source: Area3D) -> void:
 			end_monday()
 		else:
 			travel(source.target_room, source.target_spawn)
+	elif "shop_id" in source and source.shop_id != "":
+		shop_ui.open(source.shop_id)
 	elif _is_spot_today(source.spot_id):
 		_search(source.spot_id)
 	else:
@@ -868,6 +902,7 @@ func restart_after_death() -> void:
 		director.cancel()
 	GameState.death_reset()
 	item_ui.reset()
+	shop_ui.reset()
 	GameState.spawn_seed = _roll_seed()
 	deal_layout()
 	autosave()
@@ -981,6 +1016,10 @@ func _load_room(id: String, spawn_name: String) -> void:
 			it.interacted.connect(_on_interacted)
 	for d in GameState.dropped:
 		_spawn_dropped(d)
+	for it in room.find_children("*", "Area3D", true, false):
+		if "shop_id" in it and it.shop_id != "":
+			shop_ui.greet(it.shop_id)
+			break
 	if director != null:
 		director.room_loaded(id)
 	apply_labels()
@@ -1344,6 +1383,47 @@ func _run_capture_items() -> void:
 	GameState.keep_note(note_id)
 	item_ui.open_inventory()
 	ok = await shot.call("items_school_bag") and ok
+	print("adapter: ", RenderingServer.get_video_adapter_name())
+	get_tree().quit(0 if ok else 1)
+
+
+## Four PNGs of the shop in 문방구 (nothing is saved): the panel open, "no bag" (a bandage with no
+## 필통), after buying a 필통, and "not enough DDEOK".
+func _run_capture_shop() -> void:
+	fade_time = 0.0
+	var ok := true
+	var shot := func(shot_name: String) -> bool:
+		for i in 8:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var path := "%s/%s.png" % [Shots.dir(), shot_name]
+		img.save_png(path)
+		img.convert(Image.FORMAT_RGB8)
+		img.resize(480, 270)
+		var lum := _mean_luminance(img)
+		print("%s  %s  luminance %.4f" % [shot_name, path, lum])
+		if lum < 0.01:
+			print("FAIL: %s is (nearly) black" % shot_name)
+			return false
+		return true
+	GameState.new_game()
+	GameState.ddeok = 4
+	_load_room("stationery", "from_alley")
+	hud.refresh()
+	var row_of := func(item: String) -> int:
+		for i in shop_ui.rows.size():
+			if shop_ui.rows[i]["item"] == item:
+				return i
+		return 0
+	shop_ui.open("act1_munbanggu")
+	ok = await shot.call("shop_open") and ok
+	shop_ui.buy_row(row_of.call("bandage"))
+	ok = await shot.call("shop_no_bag") and ok
+	shop_ui.buy_row(row_of.call("pencil_case"))
+	ok = await shot.call("shop_bought_pencil_case") and ok
+	shop_ui.buy_row(row_of.call("red_medicine"))
+	ok = await shot.call("shop_not_enough") and ok
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if ok else 1)
 

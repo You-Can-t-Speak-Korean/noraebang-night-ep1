@@ -1,0 +1,21 @@
+{
+	"name": "문방구",
+	"shopkeeper": {"name": "고옥분", "label": "문방구 할머니"},
+	"lines": {
+		"enter": "어서 오세요.",
+		"open": "뭐 줄까?",
+		"bought": "옜다.",
+		"not_enough": "돈이 모자라네.",
+		"sold_out": "그건 다 팔렸어.",
+		"no_bag": "넣을 데가 없잖아. 필통부터 사 가.",
+		"bag_full": "넣을 데가 없잖아.",
+		"close": "또 와라.",
+		"cannot_equip": "[placeholder] You can't carry that."
+	},
+	"stock": [
+		{"item": "pencil_case", "price": 3, "quantity": 1},
+		{"item": "notebook", "price": 1, "quantity": 1},
+		{"item": "bandage", "price": 1, "quantity": 3},
+		{"item": "red_medicine", "price": 2, "quantity": 2}
+	]
+}

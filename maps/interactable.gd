@@ -18,6 +18,8 @@ const REACH_DEPTH := 14.0
 @export_multiline var placeholder_line := "(placeholder text)"
 ## Set on search spots (data/spawns/map_01.json); the World deals what is found there.
 @export var spot_id := ""
+## Set on a shop counter (data/shop/<shop_id>.json): Enter opens that shop's panel.
+@export var shop_id := ""
 ## Off for talk spots: the character standing there is the visual.
 @export var show_body := true
 

@@ -1,0 +1,14 @@
+{
+	"name": "Test shop",
+	"shopkeeper": {"name": "Tester", "label": "Test keeper"},
+	"lines": {
+		"enter": "hello", "open": "what", "bought": "here", "not_enough": "poor", "sold_out": "gone",
+		"no_bag": "nobag", "bag_full": "full", "close": "bye", "cannot_equip": "cannot"
+	},
+	"stock": [
+		{"item": "bandage", "price": 5, "quantity": 2},
+		{"item": "school_bag", "price": 4, "quantity": 1},
+		{"item": "notebook", "price": 1, "quantity": 2},
+		{"item": "nunchi", "price": 1, "quantity": 9}
+	]
+}
