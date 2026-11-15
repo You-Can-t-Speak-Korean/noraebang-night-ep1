@@ -45,6 +45,22 @@ static func load_config(spawns_path: String = SPAWNS_PATH, notes_path: String = 
 	return config
 
 
+## Two maps' configs as one: the spots and budgets of both (spot ids are unique across maps);
+## extras, lines and notes come from `a` (the shared school data) unless `a` has none.
+static func merge(a: Dictionary, b: Dictionary) -> Dictionary:
+	if a.is_empty():
+		return b
+	if b.is_empty():
+		return a
+	var out := a.duplicate(true)
+	out["spots"].merge(b["spots"])
+	out["budgets"].merge(b["budgets"])
+	for key in ["extras", "lines", "notes"]:
+		if out[key].is_empty():
+			out[key] = b[key]
+	return out
+
+
 static func _read_json(path: String) -> Variant:
 	if not FileAccess.file_exists(path):
 		return null

@@ -8,6 +8,14 @@
 #     godot --path . -- --capture-hud
 #   Capture the dialogue box at Choice 1 (second option highlighted):
 #     godot --path . -- --capture-dialogue
+#   Party (Map 02, Build 6a): --skip-to party starts Scene 03 in the elevator hall.
+#   Capture the party's door choice, presents choice, phone call and 장기자랑 trigger:
+#     godot --path . -- --capture-party
+#   The chain (Build 6b): Monday's 집 door -> the 11월 3일 title card -> the party (03-A to 03-F) ->
+#   the Boss 1 fight (progress boss1_fight) -> results -> a summary screen -> the end card
+#   (progress boss1_done; Enter there starts a new game).
+#   Capture the chain's title card, the fight's first frame, the summary and the end card:
+#     godot --path . -- --capture-chain
 #   Launch options: --new-game ignores any save; --seed N forces the spot layout.
 #   Capture the 골목길 with 현정, the TV and the news line:
 #     godot --path . -- --capture-alley
@@ -31,7 +39,7 @@
 #   equipped, a health item put in a bag); --heal-order lowest_first|highest_first sets the E
 #   quick-heal order for this run only (the setting itself lives in user://settings.cfg).
 #   Dev only: --hearts N sets the hearts after launch (0.5-5, half steps);
-#   --skip-to scene_01|sat_roam|scene_02|mon_walk|mon_roam (mon = scene_02) jumps to
+#   --skip-to scene_01|sat_roam|scene_02|mon_walk|mon_roam|party|boss1_fight|boss1_done (mon = scene_02) jumps to
 #   that progress step; --no-labels starts with the name labels off (F9 toggles).
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -41,6 +49,11 @@ signal room_changed(room_id: String)
 
 const MAP_DATA := "res://data/maps/map_01.json"
 const MAP_ID := "map_01"
+const MAP2_DATA := "res://data/maps/map_02.json"
+const MAP2_ID := "map_02"
+const SPAWNS2_PATH := "res://data/spawns/map_02.json"
+## The map_day the party's finds are dealt for (and saved under, as map_02).
+const PARTY_DAY := "party"
 const PlayerScene := preload("res://characters/player.tscn")
 const HudScene := preload("res://scenes/hud.tscn")
 const DialogueBoxScene := preload("res://scenes/ui/dialogue_box.tscn")
@@ -50,12 +63,15 @@ const TuningScript := preload("res://scripts/tuning.gd")
 const KeyPromptScript := preload("res://scripts/key_prompt.gd")
 const InteractableScript := preload("res://maps/interactable.gd")
 const FightScene := preload("res://scenes/fight.tscn")
-const SKIP_TARGETS: Array[String] = ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon"]
+const SKIP_TARGETS: Array[String] = ["scene_01", "sat_roam", "scene_02", "mon_walk", "mon_roam", "mon", "party", "boss1_fight", "boss1_done"]
 const MONDAY_CARD := "1979년 10월 29일 월요일"
 const SATURDAY_CARD := "1979년 11월 3일 토요일"
 const FIGHT_AUTO_MODES: Array[String] = ["right", "wrong", "mixed", "cross"]
 const CAPTURE_FIGHT_BOSS := "eunju"
-const END_CARD := "[placeholder] END OF BUILD 3b"
+const BOSS1 := "eunju"
+const SUMMARY_TITLE := "SUMMARY [placeholder]"
+const SUMMARY_HINT := "Press Enter [placeholder]"
+const BOSS1_END_CARD := "[placeholder] END OF BUILD — Boss 1 complete\n\nPress Enter: new game"
 const MONDAY_STEPS: Array[String] = ["scene_02", "mon_walk", "mon_roam"]
 const HOME_LINE := "(아직 집에 갈 수 없다.) [placeholder: home]"
 const SCENE_EXIT_LINE := "(지금은 나갈 수 없다.) [placeholder: scene]"
@@ -82,6 +98,9 @@ var start_room := ""
 var start_spawn := ""
 var death_room := ""
 var death_spawn := ""
+## Map 02: where Scene 03 starts (data/maps/map_02.json).
+var party_room := ""
+var party_spawn := ""
 ## Search-spot data and today's deal: spot_id -> what is hidden there. Lives here,
 ## not in the room scenes, so it survives room changes.
 var spawn_config: Dictionary = {}
@@ -106,7 +125,11 @@ var progress_unlocked: Dictionary = {}
 var home_exit: Dictionary = {}
 ## F9 / --no-labels: the door, prop and actor name labels (dev aids).
 var labels_visible := true
+## An end card, the summary or the final card is up (movement stays locked).
 var end_card_shown := false
+## The post-fight summary is up / the final card is up (Enter advances / starts a new game).
+var summary_shown := false
+var boss1_end_shown := false
 ## The running fight (Build 4a), or null. A fight replaces the map: no player, no room.
 var fight: Node3D = null
 ## The blank-timing tap tool (--mark-song), while it runs.
@@ -117,6 +140,9 @@ var flashes := 0
 var _forced_seed := -1
 var _title_label: Label
 var _end_label: Label
+var _end_bg: ColorRect
+var _summary_label: Label
+var _chain_frame := -1
 var _game_over := false
 var _fade_rect: ColorRect
 var _flash_rect: ColorRect
@@ -151,11 +177,18 @@ func _ready() -> void:
 	day_unlocked = data.get("day_unlocked", {})
 	progress_unlocked = data.get("progress_unlocked", {})
 	home_exit = data.get("home_exit", {})
-	spawn_config = SpawnDealerScript.load_config()
+	var data2 = JSON.parse_string(FileAccess.get_file_as_string(MAP2_DATA))
+	if typeof(data2) == TYPE_DICTIONARY:
+		rooms.merge(data2["rooms"])
+		party_room = data2["start_room"]
+		party_spawn = data2["start_spawn"]
+	else:
+		push_error("World: could not read %s" % MAP2_DATA)
+	spawn_config = SpawnDealerScript.merge(SpawnDealerScript.load_config(), SpawnDealerScript.load_config(SPAWNS2_PATH))
 	item_ui.note_texts = spawn_config.get("notes", {})
 	var args := parse_launch_args(OS.get_cmdline_user_args())
 	_forced_seed = args["seed"]
-	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"] or args["capture_fight"] or args["capture_items"] or args["capture_shop"]
+	var capturing: bool = args["capture_map"] or args["capture_hud"] or args["capture_dialogue"] or args["capture_alley"] or args["capture_rooms"] or args["capture_fight"] or args["capture_items"] or args["capture_shop"] or args["capture_party"] or args["capture_chain"]
 	labels_visible = not args["no_labels"]
 	capture_mode = capturing
 	if capturing:
@@ -187,21 +220,13 @@ func _ready() -> void:
 	if args["check_song"] != "":
 		start_fight(args["check_song"], "", false, false, true)
 		return
-	if args["fight"] != "" or GameState.in_fight:
-		# --fight <boss> starts it; a saved fight (relaunch mid-fight) resumes at its start.
-		start_fight(args["fight"] if args["fight"] != "" else GameState.current_boss, args["fight_auto"], args["fight"] == "")
+	if args["fight"] != "" or GameState.in_fight or GameState.progress == "boss1_fight":
+		# --fight <boss> starts it; a saved fight (relaunch mid-fight) resumes at its start; progress
+		# boss1_fight (the chain's fight, also --skip-to boss1_fight) starts Boss 1 from the chain.
+		var boss: String = args["fight"] if args["fight"] != "" else (GameState.current_boss if GameState.current_boss != "" else BOSS1)
+		start_fight(boss, args["fight_auto"], args["fight"] == "")
 		return
-	dialogue_box = DialogueBoxScene.instantiate()
-	add_child(dialogue_box)
-	dialogue_box.opened.connect(update_lock)
-	dialogue_box.closed.connect(update_lock)
-	player = PlayerScene.instantiate()
-	add_child(player)
-	director = DirectorScript.new()
-	director.world = self
-	director.time_scale = director_time_scale
-	add_child(director)
-	GameState.player_died.connect(_on_player_died)
+	_build_map_nodes()
 	if capturing and not (args["capture_dialogue"] or args["capture_alley"]):
 		_load_room(start_room, start_spawn)
 	elif begin_progress or args["capture_dialogue"] or args["capture_alley"]:
@@ -222,8 +247,30 @@ func _ready() -> void:
 		_run_capture_items()
 	elif args["capture_shop"]:
 		_run_capture_shop()
+	elif args["capture_party"]:
+		_run_capture_party()
+	elif args["capture_chain"]:
+		_run_capture_chain()
 	elif begin_progress:
 		begin()
+
+
+## The dialogue box, the player and the scene director (not built when the launch goes straight into a fight).
+func _build_map_nodes() -> void:
+	if player != null:
+		return
+	dialogue_box = DialogueBoxScene.instantiate()
+	add_child(dialogue_box)
+	dialogue_box.opened.connect(update_lock)
+	dialogue_box.closed.connect(update_lock)
+	player = PlayerScene.instantiate()
+	add_child(player)
+	director = DirectorScript.new()
+	director.world = self
+	director.time_scale = director_time_scale
+	add_child(director)
+	GameState.player_died.connect(_on_player_died)
+	GameState.nunchi_lost.connect(_on_nunchi_lost)
 
 
 ## {"new_game": bool, "seed": int (-1 = none), "capture_map": bool, "capture_hud": bool,
@@ -231,14 +278,14 @@ func _ready() -> void:
 ## "capture_fight": bool, "fight": String boss id ("" = none), "fight_auto": "" | "right" | "wrong" | "mixed",
 ## "no_audio": bool, "check_song": String boss id ("" = none), "mark_song": String boss id ("" = none), "hearts_halves": int (-1 = none), "skip_to": String ("" = none),
 ## "nunchi": int (-1 = none), "known": Array[String] card ids, "capture_items": bool,
-## "ddeok": int (-1 = none), "capture_shop": bool, "give": Array[String] item ids, "heal_order": "" | "lowest_first" | "highest_first"}
+## "ddeok": int (-1 = none), "capture_shop": bool, "capture_party": bool, "capture_chain": bool, "give": Array[String] item ids, "heal_order": "" | "lowest_first" | "highest_first"}
 static func parse_launch_args(args: PackedStringArray) -> Dictionary:
 	var parsed := {"new_game": "--new-game" in args, "seed": -1,
 			"capture_map": "--capture-map" in args, "capture_hud": "--capture-hud" in args,
 			"capture_dialogue": "--capture-dialogue" in args, "capture_alley": "--capture-alley" in args, "capture_rooms": "--capture-rooms" in args,
 			"capture_fight": "--capture-fight" in args, "fight": "", "fight_auto": "",
 			"no_labels": "--no-labels" in args, "no_audio": "--no-audio" in args, "check_song": "", "mark_song": "", "hearts_halves": -1, "skip_to": "", "nunchi": -1, "known": [],
-			"capture_items": "--capture-items" in args, "give": [], "heal_order": "", "ddeok": -1, "capture_shop": "--capture-shop" in args}
+			"capture_items": "--capture-items" in args, "give": [], "heal_order": "", "ddeok": -1, "capture_shop": "--capture-shop" in args, "capture_party": "--capture-party" in args, "capture_chain": "--capture-chain" in args}
 	var at := args.find("--seed")
 	if at != -1:
 		if at + 1 < args.size() and args[at + 1].is_valid_int() and int(args[at + 1]) >= 0:
@@ -405,6 +452,9 @@ func set_known_dev(cards: Array, boss: String) -> void:
 ## "mon" is an alias of scene_02.
 func _apply_skip_to(target: String) -> void:
 	GameState.set_progress("scene_02" if target == "mon" else target)
+	if target == "party" or target == "boss1_fight" or target == "boss1_done":
+		_ensure_day(PARTY_DAY)
+		return
 	_ensure_day("mon" if MONDAY_STEPS.has(GameState.progress) else "sat")
 
 
@@ -417,6 +467,17 @@ func _ensure_day(day: String) -> void:
 
 ## Starts from the saved progress step (at the start of that step).
 func begin() -> void:
+	if GameState.progress == "party":
+		begin_party(true)
+		return
+	if GameState.progress == "party_end" or GameState.progress == "sat2_pending":
+		# Saves from before 6b: the party (re)starts, from its checkpoint when there is one.
+		begin_party(not GameState.party_snapshot.is_empty())
+		return
+	if GameState.progress == "boss1_done":
+		cut_to_black()
+		show_boss1_end()
+		return
 	if GameState.progress == "mon":
 		GameState.set_progress("scene_02")  # an older name for the start of Scene 02
 	if MONDAY_STEPS.has(GameState.progress):
@@ -432,11 +493,47 @@ func begin() -> void:
 			director.enter_walk()
 		"mon_roam":
 			director.enter_mon_roam()
-		"sat2_pending":
-			cut_to_black()
-			_show_end_card()
 		_:
 			director.start_scene()
+
+
+## Starts Scene 03 at 03-A in Map 02. `restore`: put the party checkpoint back first (a relaunch
+## inside the party); without one, whatever the player carries becomes the checkpoint. The finds
+## are dealt anew either way (a fresh seed), over what the checkpoint says was already searched.
+func begin_party(restore := true) -> void:
+	if director != null:
+		director.cancel()
+	if restore:
+		GameState.restore_party_snapshot()
+	elif GameState.party_snapshot.is_empty():
+		GameState.leave_map()
+	GameState.set_progress("party")
+	GameState.map_day = PARTY_DAY
+	GameState.spawn_seed = _roll_seed()
+	deal_layout()
+	item_ui.reset()
+	shop_ui.reset()
+	_game_over = false
+	_game_over_layer.visible = false
+	end_card_shown = false
+	_end_label.visible = false
+	_close_text()
+	_load_room(party_room, party_spawn)
+	update_lock()
+	room_changed.emit(party_room)
+	director.start_party()
+
+
+## Loads a room without a fade (the scene director fades around it).
+func enter_room(room_name: String, spawn_name: String) -> void:
+	_load_room(room_name, spawn_name)
+	room_changed.emit(room_name)
+
+
+## Shows an end card with this text (placeholder cards between builds).
+func show_end_card(text: String) -> void:
+	_end_label.text = text
+	_show_end_card()
 
 
 ## Starts `boss_id`'s fight (its song file is found by the "boss" field) and saves at its
@@ -467,6 +564,11 @@ func start_fight(boss_id: String, auto := "", resume := false, manual := false, 
 	fight.song_path = path
 	fight.labels_error = SongLabels.load_and_apply(song)
 	fight.setup(song, GameState.spawn_seed, auto, manual, clock)
+	if GameState.progress == "boss1_fight" and not check and not manual and boss_id == BOSS1:
+		# The chain's fight: a finished fight is boss1_done (so a relaunch never replays it); when the
+		# aftermath is over the summary screen follows. Connected before the autosave below.
+		fight.result_ready.connect(func(_result): GameState.set_progress("boss1_done"))
+		fight.ended.connect(_show_summary)
 	fight.result_ready.connect(func(_result): autosave())
 	add_child(fight)
 	apply_labels()
@@ -569,7 +671,7 @@ func _roll_seed() -> int:
 
 
 func collected_key() -> String:
-	return "%s:%s" % [MAP_ID, GameState.map_day]
+	return "%s:%s" % [MAP2_ID if GameState.map_day == PARTY_DAY else MAP_ID, GameState.map_day]
 
 
 ## Deals today's finds into the spots that haven't been searched yet.
@@ -609,15 +711,35 @@ func _build_ui() -> void:
 	_title_label.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(_title_label)
+	# The end card and the summary sit above the fight's own cards (layer 11).
+	var end_layer := CanvasLayer.new()
+	end_layer.layer = 12
+	add_child(end_layer)
+	_end_bg = ColorRect.new()
+	_end_bg.color = Color.BLACK
+	_end_bg.visible = false
+	_end_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_end_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	end_layer.add_child(_end_bg)
 	_end_label = Label.new()
 	_end_label.visible = false
-	_end_label.text = END_CARD
 	_end_label.add_theme_font_size_override("font_size", 48)
 	_end_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_end_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_end_label.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_end_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(_end_label)
+	end_layer.add_child(_end_label)
+	_summary_label = Label.new()
+	_summary_label.visible = false
+	_summary_label.add_theme_font_size_override("font_size", 36)
+	_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_summary_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_summary_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_summary_label.offset_left = 120
+	_summary_label.offset_right = -120
+	_summary_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	end_layer.add_child(_summary_label)
 	_flash_rect = ColorRect.new()
 	_flash_rect.color = Color(0.8, 0.0, 0.0, 0.0)
 	_flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -656,6 +778,11 @@ func _build_ui() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
 		toggle_labels()
+		return
+	if (summary_shown or boss1_end_shown) and event.is_action_pressed("confirm") and not event.is_echo():
+		# Not on the event that raised the screen: the fight's Enter reaches here too, in the same frame.
+		if Engine.get_process_frames() != _chain_frame:
+			_advance_chain()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and fight == null and player != null \
 			and (event.keycode == KEY_TAB or event.keycode == KEY_E):
@@ -890,17 +1017,27 @@ func _flash() -> void:
 	create_tween().tween_property(_flash_rect, "color:a", 0.0, FLASH_TIME)
 
 
+## 눈치 over the cap is lost (it is never turned into DDEOK); a short placeholder cue says so.
+func _on_nunchi_lost(points: int) -> void:
+	if item_ui != null:
+		item_ui.toast("Nunchi is full: %d lost [placeholder]" % points)
+
+
 func _on_player_died() -> void:
 	_game_over = true
 	update_lock()
 	_game_over_layer.visible = true
 
 
-## Enter on the game-over screen: everything resets to the start of Scene 01.
+## Enter on the game-over screen: everything resets to the start of Scene 01 (Map 01), or, in the
+## party, to the checkpoint taken at 03-A and Scene 03 begins again there.
 func restart_after_death() -> void:
 	if director != null:
 		director.cancel()
 	GameState.death_reset()
+	if GameState.progress == "party" and begin_progress:
+		begin_party(false)
+		return
 	item_ui.reset()
 	shop_ui.reset()
 	GameState.spawn_seed = _roll_seed()
@@ -954,8 +1091,8 @@ func end_saturday() -> void:
 	director.start_scene_02()
 
 
-## Walking through the 집 door ends Monday: black, the date card, then the end
-## card for this build. Placeholder until the party map exists.
+## Walking through the 집 door ends Monday: black, the 11월 3일 title card, then the party starts at
+## 03-A in Map 02 (progress party, the party checkpoint and an autosave: Scene 03's start does those).
 func end_monday() -> void:
 	transitioning = true
 	update_lock()
@@ -965,16 +1102,131 @@ func end_monday() -> void:
 	if fade_time > 0.0:
 		await get_tree().create_timer(title_hold).timeout
 	GameState.leave_map()
-	GameState.set_progress("sat2_pending")
-	autosave()
+	GameState.party_snapshot = {}
+	begin_party(false)
 	_title_label.visible = false
 	transitioning = false
-	_show_end_card()
-	room_changed.emit(room_id)
+	update_lock()
+
+
+## Scene 03 is over: the map goes away and Boss 1's fight starts (progress boss1_fight, the
+## fight-start snapshot and an autosave come with start_fight). A game over in it retries the fight.
+func start_boss1_fight() -> void:
+	if director != null:
+		director.cancel()
+	_close_text()
+	item_ui.reset()
+	shop_ui.reset()
+	if room != null:
+		remove_child(room)
+		room.queue_free()
+		room = null
+	room_id = ""
+	key_prompt = null
+	if player != null:
+		player.current_interactable = null
+		player.visible = false
+	GameState.set_progress("boss1_fight")
+	GameState.set_boss(BOSS1)
+	start_fight(BOSS1)
+	update_lock()
+
+
+## The lines the summary screen lists, straight from GameState (the first is the title).
+func summary_lines() -> Array[String]:
+	var lost: Array[String] = []
+	for card in GameState.hand:
+		if not GameState.secrets_held.has(card):
+			lost.append(card)
+	var inv: Dictionary = GameState.inventory
+	var items: Array[String] = []
+	for id in [inv.get("bag", ""), inv.get("case", ""), inv.get("notebook", "")]:
+		if str(id) != "":
+			items.append(Items.item_name(str(id)))
+	for id in inv.get("bag_items", []) + inv.get("case_items", []):
+		items.append(Items.item_name(str(id)))
+	return [
+		SUMMARY_TITLE,
+		"Hearts: %s / %s" % [hearts_text(GameState.hearts_halves), hearts_text(GameState.hearts_max_halves)],
+		"Nunchi: %d / %d" % [GameState.nunchi, GameState.nunchi_cap],
+		"DDEOK: %d" % GameState.ddeok,
+		"Lost cards: %s" % (", ".join(lost) if not lost.is_empty() else "none"),
+		"Items: %s" % (", ".join(items) if not items.is_empty() else "none"),
+	]
+
+
+## The fight's aftermath is over: the summary goes up over the fight's own end card (the song plays on).
+func _show_summary() -> void:
+	summary_shown = true
+	end_card_shown = true
+	_chain_frame = Engine.get_process_frames()
+	_end_bg.visible = true
+	_end_label.visible = false
+	_summary_label.text = "\n".join(summary_lines()) + "\n\n" + SUMMARY_HINT
+	_summary_label.visible = true
+	update_lock()
+
+
+## The final card of the slice. Enter on it starts a new game.
+func show_boss1_end() -> void:
+	summary_shown = false
+	boss1_end_shown = true
+	_chain_frame = Engine.get_process_frames()
+	_summary_label.visible = false
+	_end_bg.visible = true
+	_end_label.text = BOSS1_END_CARD
+	_end_label.visible = true
+	end_card_shown = true
+	update_lock()
+
+
+## Enter on the summary shows the final card; Enter on the final card starts a new game.
+func _advance_chain() -> void:
+	if summary_shown:
+		show_boss1_end()
+	elif boss1_end_shown:
+		start_new_game()
+
+
+## A new game from the final card: the fight (and its song) is freed, everything resets, Scene 01 begins.
+func start_new_game() -> void:
+	if fight != null:
+		remove_child(fight)
+		fight.queue_free()  # leaving the tree stops the song
+		fight = null
+	summary_shown = false
+	boss1_end_shown = false
+	end_card_shown = false
+	_end_bg.visible = false
+	_end_label.visible = false
+	_summary_label.visible = false
+	if director != null:
+		director.cancel()
+	GameState.new_game()
+	GameState.spawn_seed = _roll_seed()
+	deal_layout()
+	if hud != null:
+		hud.refresh()
+	item_ui.reset()
+	shop_ui.reset()
+	_game_over = false
+	_game_over_layer.visible = false
+	_close_text()
+	_build_map_nodes()
+	player.visible = true
+	_fade_rect.color.a = 0.0
+	_load_room(death_room, death_spawn)
+	update_lock()
+	room_changed.emit(death_room)
+	if begin_progress:
+		director.start_scene()
+	else:
+		autosave()
 
 
 func _show_end_card() -> void:
 	end_card_shown = true
+	_end_bg.visible = true
 	_end_label.visible = true
 	update_lock()
 
@@ -1426,6 +1678,164 @@ func _run_capture_shop() -> void:
 	ok = await shot.call("shop_not_enough") and ok
 	print("adapter: ", RenderingServer.get_video_adapter_name())
 	get_tree().quit(0 if ok else 1)
+
+
+## Four PNGs of the party (nothing is saved): the door choice (03-B), the presents choice (03-C),
+## the phone call (03-E, with 아빠 나라 known to 은주 so its line shows) and the 장기자랑 trigger
+## (03-F: the last line, then the fight's first frame). Driven by the real triggers and the dialogue box.
+func _run_capture_party() -> void:
+	fade_time = 0.0
+	director.time_scale = 8.0
+	var ok := true
+	var shot := func(shot_name: String) -> bool:
+		for i in 8:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var path := "%s/%s.png" % [Shots.dir(), shot_name]
+		img.save_png(path)
+		img.convert(Image.FORMAT_RGB8)
+		img.resize(480, 270)
+		var lum := _mean_luminance(img)
+		print("%s  %s  luminance %.4f" % [shot_name, path, lum])
+		if lum < 0.01:
+			print("FAIL: %s is (nearly) black" % shot_name)
+			return false
+		return true
+	var lines: Array = []
+	dialogue_box.line_shown.connect(func(c: String, t: String): lines.append(t))
+	# Plays on (Enter on every line) until `until` is true; false if it never became so.
+	var play_until := func(until: Callable) -> bool:
+		var frames := 0
+		while not until.call() and frames < 3000:
+			if dialogue_box.waiting and not until.call():
+				dialogue_box.advance()
+			await get_tree().process_frame
+			frames += 1
+		return until.call()
+	GameState.new_game()
+	GameState.lose_secret("dad_country", "eunju")
+	hud.refresh()
+	begin_party(false)
+	await play_until.call(func(): return not dialogue_box.is_open and director.phase == "p_walk")
+	enter_room("corridor", "from_elevator_hall")
+	player.place(5.0, 0)
+	if not await play_until.call(func(): return dialogue_box.choosing):
+		print("FAIL: choice 1 never appeared")
+		get_tree().quit(1)
+		return
+	dialogue_box.move_highlight(1)
+	ok = await shot.call("party_door_choice") and ok
+	dialogue_box.choose(0)
+	if not await play_until.call(func(): return dialogue_box.choosing):
+		print("FAIL: choice 2 never appeared")
+		get_tree().quit(1)
+		return
+	dialogue_box.move_highlight(1)
+	ok = await shot.call("party_presents_choice") and ok
+	dialogue_box.choose(0)
+	await play_until.call(func(): return director.phase == "p_roam" and not dialogue_box.is_open)
+	enter_room("inner_hallway", "from_living_room")
+	await get_tree().process_frame
+	enter_room("bathroom_apt", "from_inner_hallway")
+	if not await play_until.call(func(): return lines.has("에티오피아래. 거기 지금 공산당이잖아.") and dialogue_box.waiting):
+		print("FAIL: the phone call never reached its conditional line")
+		get_tree().quit(1)
+		return
+	ok = await shot.call("party_phone") and ok
+	await play_until.call(func(): return director.phase == "p_back" and not dialogue_box.is_open)
+	enter_room("living_room", "from_inner_hallway")
+	if not await play_until.call(func(): return lines.has("이 노래 몰라? 이 노래 모르는 애는… 죽어야 돼.") and dialogue_box.waiting):
+		print("FAIL: 03-F never reached its last line")
+		get_tree().quit(1)
+		return
+	ok = await shot.call("party_stage_trigger") and ok
+	await play_until.call(func(): return fight != null)
+	ok = await shot.call("party_fight_start") and ok
+	print("adapter: ", RenderingServer.get_video_adapter_name())
+	get_tree().quit(0 if ok else 1)
+
+
+## The chain through its real triggers, with the silent clock: Monday's 집 door and the 11월 3일 title
+## card, the party driven to 03-F, the fight's first frame, then (auto-answered, all right) the
+## summary and the final card. Four PNGs, nothing saved.
+func _run_capture_chain() -> void:
+	var ok := true
+	var shot := func(shot_name: String, min_luminance := 0.01) -> bool:
+		for i in 8:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var path := "%s/%s.png" % [Shots.dir(), shot_name]
+		img.save_png(path)
+		img.convert(Image.FORMAT_RGB8)
+		img.resize(480, 270)
+		var lum := _mean_luminance(img)
+		print("%s  %s  luminance %.4f" % [shot_name, path, lum])
+		if lum < min_luminance:
+			print("FAIL: %s is (nearly) black" % shot_name)
+			return false
+		return true
+	fade_time = 0.18
+	title_hold = 1.2
+	director.time_scale = 8.0
+	GameState.new_game()
+	GameState.set_progress("mon_roam")
+	GameState.map_day = "mon"
+	deal_layout()
+	_load_room("alley", "from_gate")
+	end_monday()
+	var frames := 0
+	while not _title_label.visible and frames < 600:
+		await get_tree().process_frame
+		frames += 1
+	ok = await shot.call("chain_title", 0.0005) and ok
+	fade_time = 0.0
+	# The party: advance every line, take the first choice, walk through the three triggers.
+	frames = 0
+	while fight == null and frames < 6000:
+		if dialogue_box.waiting:
+			dialogue_box.advance()
+		elif dialogue_box.choosing:
+			dialogue_box.choose(0)
+		elif not dialogue_box.is_open and not transitioning and not director.world.text_is_open():
+			match director.phase:
+				"p_walk":
+					if room_id != "corridor":
+						enter_room("corridor", "from_elevator_hall")
+						player.place(5.0, 0)
+				"p_roam":
+					if room_id == "living_room":
+						enter_room("inner_hallway", "from_living_room")
+					elif room_id == "inner_hallway":
+						enter_room("bathroom_apt", "from_inner_hallway")
+				"p_back":
+					if room_id != "living_room":
+						enter_room("living_room", "from_inner_hallway")
+		await get_tree().process_frame
+		frames += 1
+	if fight == null:
+		print("FAIL: the party never reached the fight (phase %s, room %s)" % [director.phase, room_id])
+		get_tree().quit(1)
+		return
+	print("progress after 03-F: ", GameState.progress)
+	ok = await shot.call("chain_fight") and ok
+	fight.auto_mode = "right"
+	fight.time_scale = 30.0
+	frames = 0
+	while not summary_shown and frames < 6000:
+		await get_tree().process_frame
+		frames += 1
+	if not summary_shown:
+		print("FAIL: the summary never appeared")
+		get_tree().quit(1)
+		return
+	ok = await shot.call("chain_summary", 0.001) and ok
+	_advance_chain()
+	ok = await shot.call("chain_end", 0.001) and ok
+	print("progress at the end card: ", GameState.progress)
+	print("adapter: ", RenderingServer.get_video_adapter_name())
+	get_tree().quit(0 if ok and GameState.progress == "boss1_done" else 1)
 
 
 func _mean_luminance(img: Image) -> float:

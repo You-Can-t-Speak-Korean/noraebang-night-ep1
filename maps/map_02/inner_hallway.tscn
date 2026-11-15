@@ -1,0 +1,66 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="inner_hallway" instance=ExtResource("1")]
+room_id = "inner_hallway"
+room_title = "복도"
+bounds_left = -8.0
+bounds_right = 8.0
+wall_color = Color(0.58, 0.54, 0.48, 1)
+
+[node name="To_living_room" parent="." instance=ExtResource("2")]
+position = Vector3(-6.0, 0, -7.85)
+label_text = "거실"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "living_room"
+target_spawn = "from_inner_hallway"
+
+[node name="To_kitchen" parent="." instance=ExtResource("2")]
+position = Vector3(0.0, 0, -7.85)
+label_text = "부엌"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "kitchen"
+target_spawn = "from_inner_hallway"
+
+[node name="To_bathroom" parent="." instance=ExtResource("2")]
+position = Vector3(6.0, 0, -7.85)
+label_text = "화장실"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "bathroom_apt"
+target_spawn = "from_inner_hallway"
+
+[node name="from_living_room" parent="." instance=ExtResource("3")]
+position = Vector3(-6.0, 0, 0)
+
+[node name="from_kitchen" parent="." instance=ExtResource("3")]
+position = Vector3(0.0, 0, 0)
+
+[node name="from_bathroom" parent="." instance=ExtResource("3")]
+position = Vector3(6.0, 0, 0)
+
+[node name="Closet" parent="." instance=ExtResource("5")]
+position = Vector3(-3.0, 0, -7.3)
+size = Vector3(1.4, 2.0, 0.5)
+color = Color(0.5, 0.4, 0.3, 1)
+label_text = "closet"
+spot_id = "hallway_closet"
+placeholder_line = "(placeholder)"
+
+[node name="FamilyPhotos" parent="." instance=ExtResource("4")]
+position = Vector3(3.0, 0, -7.7)
+size = Vector3(1.4, 0.8, 0.1)
+color = Color(0.7, 0.65, 0.5, 1)
+elevation = 1.2
+label_text = "photos"
+

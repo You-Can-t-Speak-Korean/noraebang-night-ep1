@@ -1,0 +1,58 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="genkan" instance=ExtResource("1")]
+room_id = "genkan"
+room_title = "현관"
+bounds_left = -5.0
+bounds_right = 5.0
+wall_color = Color(0.58, 0.52, 0.46, 1)
+
+[node name="To_corridor" parent="." instance=ExtResource("2")]
+position = Vector3(-3.5, 0, -7.85)
+label_text = "Corridor"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "corridor"
+target_spawn = "from_genkan"
+locked = true
+
+[node name="To_living_room" parent="." instance=ExtResource("2")]
+position = Vector3(3.5, 0, -7.85)
+label_text = "거실"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "living_room"
+target_spawn = "from_genkan"
+
+[node name="from_corridor" parent="." instance=ExtResource("3")]
+position = Vector3(-3.5, 0, 0)
+
+[node name="from_living_room" parent="." instance=ExtResource("3")]
+position = Vector3(3.5, 0, 0)
+
+[node name="ShoeShelf" parent="." instance=ExtResource("5")]
+position = Vector3(0.0, 0, -7.2)
+size = Vector3(1.8, 1.0, 0.5)
+color = Color(0.5, 0.4, 0.3, 1)
+label_text = "shoe shelf"
+spot_id = "genkan_shoes"
+placeholder_line = "(placeholder)"
+
+[node name="ShoesA" parent="." instance=ExtResource("4")]
+position = Vector3(-0.5, 0, -6.5)
+size = Vector3(0.35, 0.12, 0.2)
+color = Color(0.2, 0.2, 0.25, 1)
+
+[node name="ShoesB" parent="." instance=ExtResource("4")]
+position = Vector3(0.4, 0, -6.5)
+size = Vector3(0.3, 0.12, 0.2)
+color = Color(0.5, 0.25, 0.2, 1)
+

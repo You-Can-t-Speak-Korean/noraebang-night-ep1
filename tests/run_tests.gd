@@ -94,6 +94,7 @@ func _initialize() -> void:
 	await _test_build_4cb()
 	await _test_items_fight()
 	await _test_shop()
+	await _test_party()
 	check(_real_song_md5s() == song_files_before, "the tests leave the real song JSON and labels file byte-identical")
 	check(FileAccess.get_file_as_bytes(project_path) == project_before, "the fight tests leave project.godot byte-identical")
 	check(FileAccess.file_exists(real_save) == real_existed and (not real_existed or FileAccess.get_file_as_bytes(real_save) == real_before), "the real save was never touched by the run")
@@ -175,17 +176,18 @@ func _test_nunchi() -> void:
 	var gs := make_gs()
 	check(gs.add_nunchi(3) == 0 and gs.nunchi == 3, "adds below cap, no overflow")
 	var over: int = gs.add_nunchi(6)
-	check(gs.nunchi == 7 and over == 2, "caps at 7, returns overflow 2")
-	check(gs.ddeok == 2, "overflow becomes DDEOK at 1 per point")
-	gs.nunchi_overflow_ddeok_per_point = 3
+	check(gs.nunchi == 7 and over == 2, "caps at 7, returns the 2 points that were lost")
+	check(gs.ddeok == 0, "extra 눈치 at the cap is lost: it does not become DDEOK")
+	var lost_seen := [0]
+	gs.nunchi_lost.connect(func(n): lost_seen[0] += n)
 	gs.add_nunchi(2)
-	check(gs.ddeok == 8, "overflow uses the tuned rate")
+	check(gs.ddeok == 0 and gs.nunchi == 7 and lost_seen[0] == 2, "...still lost (and announced) the next time; DDEOK unchanged")
 	check(gs.add_nunchi(0) == 0 and gs.nunchi == 7, "add_nunchi(0) ignored")
 	check(gs.spend_nunchi(3) and gs.nunchi == 4, "spend_nunchi succeeds when enough")
 	check(not gs.spend_nunchi(5) and gs.nunchi == 4, "spend_nunchi fails when short, spends nothing")
 	check(not gs.spend_nunchi(0), "spend_nunchi(0) is false")
 	gs.add_ddeok(5)
-	check(gs.ddeok == 13, "add_ddeok")
+	check(gs.ddeok == 5, "add_ddeok")
 	gs.free()
 
 
@@ -294,7 +296,7 @@ func _test_resets() -> void:
 	print("Resets")
 	var gs := make_gs()
 	var defaults: Dictionary = gs._default_state()
-	check(defaults.size() == 22, "default state has all 22 saved fields")
+	check(defaults.size() == 23, "default state has all 23 saved fields")
 	_dirty(gs)
 	var died := watch(gs, ["state_reset"])
 	gs.death_reset()
@@ -315,7 +317,7 @@ func _test_resets() -> void:
 	check(GameStateScript.PERSISTS_THROUGH_DEATH.is_empty(), "PERSISTS_THROUGH_DEATH is empty for now")
 	_dirty(gs)
 	gs._death_reset_keeping(["ddeok", "notes", "scores"] as Array[String])
-	check(gs.ddeok == 5 and same(gs.notes, ["n"]) and gs.scores.has("eunju"), "listed fields survive the reset")
+	check(gs.ddeok == 3 and same(gs.notes, ["n"]) and gs.scores.has("eunju"), "listed fields survive the reset (the 눈치 over the cap was lost, not turned into DDEOK)")
 	check(gs.nunchi == 0 and gs.hearts_halves == 10 and gs.progress == "scene_01", "unlisted fields still reset")
 	gs.free()
 
@@ -358,7 +360,7 @@ func _test_saves() -> void:
 	check(not FileAccess.file_exists(gs.save_path + ".tmp"), "atomic write leaves no temp file")
 	check(not FileAccess.file_exists(gs.save_path + ".bak"), "no .bak on first save")
 	var env = JSON.parse_string(_read(gs.save_path))
-	check(env["game"] == "noraebang-night" and int(env["save_version"]) == 3 and env["state_version"] == "0.4", "envelope fields")
+	check(env["game"] == "noraebang-night" and int(env["save_version"]) == 4 and env["state_version"] == "0.4", "envelope fields")
 	check(not env["state"].has("leaks"), "leaks are not saved")
 
 	var other := make_gs()
@@ -373,13 +375,13 @@ func _test_saves() -> void:
 	check(FileAccess.file_exists(gs.save_path + ".bak"), ".bak created on second save")
 	check(not FileAccess.file_exists(gs.save_path + ".tmp"), "still no temp file")
 	var bak = JSON.parse_string(_read(gs.save_path + ".bak"))
-	check(int(bak["state"]["ddeok"]) == 5, ".bak holds the previous save")
+	check(int(bak["state"]["ddeok"]) == 3, ".bak holds the previous save")
 
 	# Corrupt main -> falls back to .bak.
 	_write(gs.save_path, "{ not json")
 	var fallback := make_gs()
 	fallback.save_path = gs.save_path
-	check(fallback.load_game() == OK and fallback.ddeok == 5, "corrupt JSON falls back to .bak")
+	check(fallback.load_game() == OK and fallback.ddeok == 3, "corrupt JSON falls back to .bak")
 
 	# Both corrupt -> error, state untouched.
 	_write(gs.save_path + ".bak", "garbage")
@@ -1966,7 +1968,7 @@ const SCENE2_DOC := "res://docs/scripts/scene-02-eunju-scene-2-v0.2.md"
 const OC_DIALOGUE := "res://data/dialogue/optional_sat.dialogue"
 const OC_DOC := "res://docs/scripts/optional-conversations-sat-v0.1.md"
 const ALL_SPEAKERS := ["박철수", "오동진", "은주", "미숙", "미경", "최은주", "한은주", "최은주·한은주",
-		"손미숙", "손미경", "손미숙·손미경", "현정", "문태식", "철수", "동진", "상훈", "오경자"]
+		"손미숙", "손미경", "손미숙·손미경", "현정", "문태식", "철수", "동진", "상훈", "오경자", "은주 엄마", "은주 아빠"]
 
 
 ## Stands in for the director for the 3b cues (and 01's new pause).
@@ -2388,22 +2390,12 @@ func _test_scene2_flow() -> void:
 		await process_frame
 		guard += 1
 	check(world._title_label.visible and world._title_label.text == "1979년 11월 3일 토요일" and world.player.movement_locked, "the title card shows 1979년 11월 3일 토요일")
-	guard = 0
-	while not world.end_card_shown and guard < 300:
-		await process_frame
-		guard += 1
-	check(world.end_card_shown and world._end_label.visible and world._end_label.text == "[placeholder] END OF BUILD 3b", "the end card shows")
-	check(gs.progress == "sat2_pending" and not world._title_label.visible and world.player.movement_locked, "progress sat2_pending, locked")
+	check(await _until(func(): return gs.progress == "party" and world.room_id == "elevator_hall" and not world._title_label.visible), "after the title card the party starts at 03-A in the elevator hall (progress party)")
+	check(not world.end_card_shown and world.director.phase == "p_walk" and not gs.party_snapshot.is_empty(), "no end card: Scene 03 runs and has taken its checkpoint")
 	var end_save := make_gs()
 	end_save.save_path = gs.save_path
-	check(end_save.load_game() == OK and end_save.progress == "sat2_pending", "sat2_pending is autosaved")
+	check(end_save.load_game() == OK and end_save.progress == "party" and not end_save.party_snapshot.is_empty(), "the party start is autosaved")
 	end_save.free()
-	await _stop_world(world)
-
-	# Launching with sat2_pending shows the same end card.
-	_write_progress_save("sat2_pending", "mon")
-	world = await _start_world(true, true)
-	check(world.end_card_shown and world._end_label.visible and world.player.movement_locked, "resume sat2_pending: the end card")
 	await _stop_world(world)
 
 	# mon_roam resume: the 문방구 door is open and the 집 door works.
@@ -2416,7 +2408,7 @@ func _test_scene2_flow() -> void:
 	await _frames(3)
 	await _press("confirm")
 	await _frames(3)
-	check(gs.progress == "sat2_pending" and world.end_card_shown, "the 집 door ends Monday (no animation timing)")
+	check(await _until(func(): return gs.progress == "party" and world.room_id == "elevator_hall") and not world.end_card_shown, "the 집 door ends Monday: the party starts (no animation timing)")
 	await _stop_world(world)
 
 	# Saturday's 집 door and 문방구 are shut (sat_roam).
@@ -2787,6 +2779,26 @@ func _floor_things(room: Node, room_id: String) -> Array:
 			var a: Dictionary = cfg["actors"][id]
 			things.append({"name": "%s actor %s" % [path.get_file(), id], "lo": a["x"] - BODY_HALF, "hi": a["x"] + BODY_HALF,
 					"z0": a["z"] - BODY_HALF, "z1": a["z"] + BODY_HALF})
+	# Scene 03 (Map 02): every stage's cast and every conversation's talk spot and talkers.
+	var scene3: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/scenes/scene_03.json"))
+	for stage_id in scene3["stages"]:
+		var stage: Dictionary = scene3["stages"][stage_id]
+		if stage["room"] != room_id:
+			continue
+		for id in stage.get("actors", {}):
+			var a: Dictionary = stage["actors"][id]
+			things.append({"name": "scene_03 %s actor %s" % [stage_id, id], "lo": a["x"] - BODY_HALF, "hi": a["x"] + BODY_HALF,
+					"z0": a["z"] - BODY_HALF, "z1": a["z"] + BODY_HALF})
+	for id in scene3["conversations"]:
+		var pc: Dictionary = scene3["conversations"][id]
+		if pc["room"] != room_id:
+			continue
+		things.append({"name": "scene_03 %s talk spot" % id, "lo": pc["x"] - pc["size"][0] / 2.0, "hi": pc["x"] + pc["size"][0] / 2.0,
+				"z0": pc["z"] - pc["size"][2] / 2.0, "z1": pc["z"] + pc["size"][2] / 2.0})
+		for a in pc["actors"]:
+			var ax: float = pc["x"] + a["dx"]
+			things.append({"name": "scene_03 %s actor %s" % [id, a["name"]], "lo": ax - BODY_HALF, "hi": ax + BODY_HALF,
+					"z0": a["z"] - BODY_HALF, "z1": a["z"] + BODY_HALF})
 	var optional: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/scenes/optional_sat.json"))
 	for id in optional["conversations"]:
 		var oc: Dictionary = optional["conversations"][id]
@@ -2804,10 +2816,13 @@ func _floor_things(room: Node, room_id: String) -> Array:
 func _test_door_clearance() -> void:
 	print("Doors stay clear")
 	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(MAP_DATA))
+	var data2: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/maps/map_02.json"))
+	var all_rooms: Dictionary = data["rooms"].duplicate()
+	all_rooms.merge(data2["rooms"])
 	var lanes := TuningScript.lane_config()
 	var tested := 0
-	for id in data["rooms"]:
-		var room: Node = load(data["rooms"][id]).instantiate()
+	for id in all_rooms:
+		var room: Node = load(all_rooms[id]).instantiate()
 		var things := _floor_things(room, id)
 		var bad := []
 		for door in _door_list(room):
@@ -2826,7 +2841,7 @@ func _test_door_clearance() -> void:
 		check(bad.is_empty(), "%s: nothing in a door's reach zone or on an arrival point %s" % [id, str(bad)])
 		tested += 1
 		room.free()
-	check(tested == data["rooms"].size(), "clearance checked in every registered room (%d)" % tested)
+	check(tested == all_rooms.size() and tested == data["rooms"].size() + data2["rooms"].size(), "clearance checked in every registered room of both maps (%d)" % tested)
 	# The case that started it: no desk in front of the 1학년 3반 door.
 	var classroom: Node = load(data["rooms"]["classroom_1_3"]).instantiate()
 	var door: Node3D = classroom.get_node("To_hallway_1f")
@@ -5317,7 +5332,7 @@ func _test_items_pure() -> void:
 	var l := make_gs()
 	l.save_path = s.save_path
 	check(l.load_game() == OK and l.inventory == s.inventory and l.notes == ["note_2"] and l.destroyed_notes == ["note_1"] and l.dropped == s.dropped, "...and loads back the same: containers, nested 필통, notes, destroyed notes, dropped items")
-	check(GameStateScript.SAVE_VERSION == 3, "the save version is 3 (5b added the shop stock)")
+	check(GameStateScript.SAVE_VERSION == 4, "the save version is 4 (5b added the shop stock, 6a the party checkpoint)")
 	var old := {"game": "noraebang-night", "save_version": 1, "state_version": "0.4", "state": {"hearts_halves": 7, "ddeok": 4, "notes": ["note_1", "note_2"], "progress": "sat_roam"}}
 	_write(s.save_path, JSON.stringify(old))
 	var m := make_gs()
@@ -5833,7 +5848,7 @@ func _test_shop() -> void:
 		stock_ok = stock_ok and Store.price(SHOP, e[0]) == e[1] and Store.starting_stock(SHOP).get(e[0]) == e[2] and Items.exists(e[0])
 	check(stock_ok, "stock: 필통 3x1, 공책 1x1, 반창고 1x3, 빨간약 2x2, all real item ids")
 	check(Store.shop_ids().has(SHOP) and gs.shop_stock.has(SHOP) and same(gs.shop_stock[SHOP], Store.starting_stock(SHOP)), "a new game starts with the full stock")
-	check(GameStateScript.SAVE_VERSION == 3, "save version 3")
+	check(GameStateScript.SAVE_VERSION == 4, "save version 4")
 
 	# buy: not_enough, no_bag.
 	var r: Dictionary = Store.buy(SHOP, "pencil_case")
@@ -5872,7 +5887,7 @@ func _test_shop() -> void:
 	check(gs.load_game() == OK and gs.ddeok == 1 and Store.stock_left(SHOP, "bandage") == 0 and Store.stock_left(SHOP, "pencil_case") == 0 and Store.stock_left(SHOP, "red_medicine") == 1, "DDEOK and stock come back from the save")
 	check(gs.load_game() == OK and Store.stock_left(SHOP, "bandage") == 0 and Store.stock_left(SHOP, "red_medicine") == 1, "loading again never restocks")
 	var saved: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(gs.save_path))
-	check(int(saved["save_version"]) == 3 and int(saved["state"]["shop_stock"][SHOP]["red_medicine"]) == 1, "the save file holds the stock (version 3)")
+	check(int(saved["save_version"]) == 4 and int(saved["state"]["shop_stock"][SHOP]["red_medicine"]) == 1, "the save file holds the stock (version 4)")
 
 	# The death reset restores the starting stock with everything else.
 	gs.death_reset()
@@ -6064,3 +6079,853 @@ func _test_shop() -> void:
 	check(not ui.is_open and Store.stock_left(SHOP, "bandage") == 3 and gs.ddeok == 0, "dying with the panel open closes it; the restart restores the stock")
 	await _stop_world(world)
 	_clean_world_saves()
+
+
+# ── Build 6a: the party (Map 02, Scene 03) ─────────────────────────────
+
+const SCENE3_DIALOGUE := "res://data/dialogue/scene_03.dialogue"
+const SCENE3_DOC := "res://docs/scripts/scene-03-eunju-party-v0.1.md"
+const MAP2_DATA := "res://data/maps/map_02.json"
+const SPAWNS2 := "res://data/spawns/map_02.json"
+const PARTY_ROOMS := ["elevator_hall", "corridor", "genkan", "living_room", "kitchen", "inner_hallway", "bathroom_apt"]
+
+
+## Stands in for the director for the Scene 03 cues.
+class Stage6aStub:
+	extends RefCounted
+	var calls: Array = []
+
+	func hyunjeong_looks_at_gift(): calls.append("hyunjeong_looks_at_gift")
+	func door_opens(): calls.append("door_opens")
+	func mother_looks_over(): calls.append("mother_looks_over")
+	func doll_unwrapped(): calls.append("doll_unwrapped")
+	func eunju_picks_up_gift(): calls.append("eunju_picks_up_gift")
+	func pencils_shown(): calls.append("pencils_shown")
+	func twins_laugh(): calls.append("twins_laugh")
+	func eunju_pockets_pencils(): calls.append("eunju_pockets_pencils")
+	func eunju_tosses_pencils(): calls.append("eunju_tosses_pencils")
+	func eunju_listens(): calls.append("eunju_listens")
+	func dad_falls_asleep(): calls.append("dad_falls_asleep")
+	func fridge_slammed(): calls.append("fridge_slammed")
+	func phone_call_starts(): calls.append("phone_call_starts")
+	func eunju_takes_mic(): calls.append("eunju_takes_mic")
+	func number_punched_in(): calls.append("number_punched_in")
+	func boram_hesitates(): calls.append("boram_hesitates")
+	func lights_flicker(): calls.append("lights_flicker")
+
+
+## The party checkpoint's keys of a GameState, deep-copied.
+func _party_state(gs: Node) -> Dictionary:
+	var out := {}
+	for key in gs.PARTY_KEYS:
+		var v = gs.get(key)
+		out[key] = v.duplicate(true) if v is Array or v is Dictionary else v
+	return out
+
+
+## Plays a world's open dialogue to its end through the real UI keys: Enter advances; at a choice,
+## Down `picks[n]` times and Enter.
+func _drive_box(world: Node, picks: Array = [], stop: Callable = Callable()) -> void:
+	var asked := 0
+	var guard := 0
+	while world.dialogue_box.is_open and guard < 600:
+		if stop.is_valid() and stop.call():
+			break
+		if world.dialogue_box.choosing:
+			var want: int = picks[asked] if asked < picks.size() else 0
+			asked += 1
+			for i in want:
+				await _press("ui_down")
+			await _press("confirm")
+		elif world.dialogue_box.waiting:
+			await _press("confirm")
+		else:
+			await _frames(1)
+		guard += 1
+	await _frames(2)
+
+
+func _parse_args(args: Array) -> Dictionary:
+	return load("res://scripts/world.gd").parse_launch_args(PackedStringArray(args))
+
+
+func _test_party() -> void:
+	_test_party_files()
+	_test_party_data()
+	_test_party_state()
+	await _test_party_cues()
+	await _test_party_flow()
+	await _test_party_death_and_resume()
+	await _test_reward_real_flow()
+	await _test_chain_6b()
+
+
+func _test_party_files() -> void:
+	print("Build 6a: scene_03.dialogue against the script doc")
+	check(FileAccess.file_exists(SCENE3_DOC), "the script doc scene-03-eunju-party-v0.1.md exists")
+	var text := FileAccess.get_file_as_string(SCENE3_DIALOGUE)
+	var result: DMCompilerResult = DMCompiler.compile_string(text, SCENE3_DIALOGUE)
+	check(text != "" and result.errors.is_empty(), "scene_03.dialogue compiles with Dialogue Manager (%d errors)" % result.errors.size())
+	check(not text.contains("add_ddeok") and not text.contains("damage") and not text.contains("heal"), "scene_03.dialogue changes only 눈치 and cards")
+	var res = load(SCENE3_DIALOGUE)
+	var cues := ["a", "b", "c", "ocp1", "ocp2", "ocp3", "ocp4", "e", "f"]
+	check(cues.all(func(c): return res.cues.has(c)), "cues a, b, c, ocp1-4, e, f exist")
+	_verbatim(SCENE3_DOC, SCENE3_DIALOGUE, "scene_03 vs doc", 50)
+	check(text.contains("set_boss(\"eunju\")"), "the boss in the room is eunju")
+	var doc := FileAccess.get_file_as_string(SCENE3_DOC)
+	for label in ["은주 엄마", "은주 아빠", "현정", "은주", "철수", "동진", "최은주", "한은주", "문태식"]:
+		check(doc.contains("| %s |" % label), "the character table has the speaker label %s" % label)
+	check(FileAccess.file_exists(SCENE3_DIALOGUE + ".import"), "scene_03.dialogue has been imported")
+
+
+func _test_party_data() -> void:
+	print("Build 6a: Map 02 data, rooms, spots, deal")
+	var reg: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(MAP2_DATA))
+	check(reg["rooms"].keys().size() == 7 and PARTY_ROOMS.all(func(r): return reg["rooms"].has(r)), "map_02.json registers the 7 rooms")
+	check(reg["start_room"] == "elevator_hall" and reg["rooms"].has(reg["start_room"]), "Map 02 starts in the elevator hall")
+	var scenes := {}
+	for id in reg["rooms"]:
+		scenes[id] = load(reg["rooms"][id]).instantiate()
+	var lanes := TuningScript.lane_config()
+	for id in scenes:
+		var r: Node = scenes[id]
+		check(r.room_id == id, "%s: room_id matches its registry id" % id)
+		var deepest: float = r.lane_origin_z - (lanes["lane_count"] - 1) * lanes["lane_spacing"]
+		check(deepest > -r.depth, "%s: all lanes fit inside the room" % id)
+		for door in _door_list(r):
+			var target: Node = scenes.get(door.target_room)
+			check(target != null and target.get_spawn(door.target_spawn) != null, "%s/%s leads to a real spawn in %s" % [id, door.name, door.target_room])
+	var living: Node = scenes["living_room"]
+	for n in ["LiquorCabinet", "Sofa", "Fridge", "ColorTV", "KaraokeMachine", "CakeTable"]:
+		check(living.get_node_or_null(n) != null, "거실 has %s" % n)
+	check(scenes["kitchen"].get_node_or_null("Telephone") != null, "부엌 has a telephone")
+	check(scenes["genkan"].get_node("To_corridor").locked, "the 현관 door back out is locked")
+	var seen := {"elevator_hall": true}
+	var queue: Array = ["elevator_hall"]
+	while not queue.is_empty():
+		var here: String = queue.pop_front()
+		for door in _door_list(scenes[here]):
+			if not seen.has(door.target_room):
+				seen[door.target_room] = true
+				queue.append(door.target_room)
+	check(seen.size() == 7, "every Map 02 room can be reached from the elevator hall")
+	for s in scenes.values():
+		s.free()
+	# The spot pool.
+	var cfg: Dictionary = DealerScript.merge(DealerScript.load_config(), DealerScript.load_config(SPAWNS2))
+	var party_spots: Dictionary = {}
+	for id in cfg["spots"]:
+		if cfg["spots"][id]["days"].has("party"):
+			party_spots[id] = cfg["spots"][id]
+	check(party_spots.size() == 8, "about 8 party spots (%d)" % party_spots.size())
+	check(cfg["spots"].has("stove") and cfg["spots"]["stove"]["days"] == ["sat", "mon"], "the school's spots are unchanged by the merge")
+	var traps := {}
+	for id in party_spots:
+		if party_spots[id].has("trap"):
+			traps[id] = party_spots[id]["trap"]
+	check(traps.keys().size() == 3 and traps.has("decor_cabinet") and traps.has("sofa") and traps.has("fridge"), "traps exist only at the 장식장, the sofa and the fridge")
+	check(traps["decor_cabinet"]["damage"] == 2 and traps["sofa"]["damage"] == 1 and traps["fridge"]["damage"] == 1, "the bottle costs 1 heart; the fork and the fridge door ½ each")
+	check(traps.values().all(func(t): return not _has_hangul(str(t["name"]))), "trap names are English dev labels")
+	var in_rooms := true
+	for id in party_spots:
+		var spot_ok := false
+		var rr: Node = load(reg["rooms"][party_spots[id]["room"]]).instantiate()
+		for c in rr.get_children():
+			if c.get("spot_id") == id:
+				spot_ok = true
+		rr.free()
+		in_rooms = in_rooms and spot_ok
+	check(in_rooms, "every party spot has an Interactable in its room")
+	# The deal: 2 DDEOK, 1 extra, 2 traps; deterministic per seed; traps only where they can be.
+	var budget: Dictionary = cfg["budgets"]["party"]
+	check(budget["ddeok"] == 2 and budget["extras"] == 1 and budget["traps"] == 2 and budget["ddeok_amount"] == 1, "party budget: 2 DDEOK, 1 extra, 2 traps")
+	check(same(cfg["budgets"]["sat"], cfg["budgets"]["party"]), "the party has the same budget as the school")
+	check(same(JSON.parse_string(FileAccess.get_file_as_string(SPAWNS2))["extras"], JSON.parse_string(FileAccess.get_file_as_string("res://data/spawns/map_01.json"))["extras"]), "the extras and weights are the school's")
+	var ok_counts := true
+	var ok_traps := true
+	var varied := {}
+	for seed in 120:
+		var layout: Dictionary = DealerScript.deal(cfg["spots"], budget, cfg["extras"], seed, [], [], "party")
+		var again: Dictionary = DealerScript.deal(cfg["spots"], budget, cfg["extras"], seed, [], [], "party")
+		var kc := _kind_counts(layout)
+		ok_counts = ok_counts and same(layout, again) and kc["ddeok"] == 2 and kc["trap"] == 2 and kc["note"] + kc["health"] == 1
+		for id in layout:
+			ok_traps = ok_traps and party_spots.has(id) and (layout[id]["kind"] != "trap" or traps.has(id))
+		varied[JSON.stringify(layout)] = true
+	check(ok_counts, "the deal is deterministic per seed: 2 DDEOK, 1 extra, 2 traps")
+	check(ok_traps, "traps land only on the three trap spots; every deal stays inside the party's spots")
+	check(varied.size() > 10, "different seeds deal differently (%d layouts)" % varied.size())
+	# Anti-farming: what was searched is not dealt again and counts against the budget.
+	var layout1: Dictionary = DealerScript.deal(cfg["spots"], budget, cfg["extras"], 5, [], [], "party")
+	var found: Array = []
+	for id in layout1:
+		found.append("%s:%s" % [id, layout1[id]["kind"]])
+	var layout2: Dictionary = DealerScript.deal(cfg["spots"], budget, cfg["extras"], 99, found, [], "party")
+	check(layout2.is_empty(), "after everything dealt was found, a re-deal gives nothing more")
+	var some_found: Array = found.slice(0, 2)
+	var layout3: Dictionary = DealerScript.deal(cfg["spots"], budget, cfg["extras"], 99, some_found, [], "party")
+	var searched_ids := some_found.map(func(e): return str(e).split(":")[0])
+	check(searched_ids.all(func(id): return not layout3.has(id)), "searched spots are never dealt again")
+	var total := _kind_counts(layout3)
+	var already := {"ddeok": 0, "trap": 0, "extra": 0}
+	for e in some_found:
+		var kind: String = str(e).split(":")[1]
+		if kind == "ddeok" or kind == "trap":
+			already[kind] += 1
+		else:
+			already["extra"] += 1
+	check(total["ddeok"] + already["ddeok"] <= 2 and total["trap"] + already["trap"] <= 2 and total["note"] + total["health"] + already["extra"] <= 1, "a partial re-deal stays within the party budget")
+
+
+func _test_party_state() -> void:
+	print("Build 6a: 눈치 cap, party checkpoint, save version")
+	var gs := make_gs()
+	gs.add_nunchi(7)
+	var d0: int = gs.ddeok
+	var lost := [0]
+	gs.nunchi_lost.connect(func(n): lost[0] += n)
+	check(gs.add_nunchi(1) == 1 and gs.nunchi == 7 and gs.ddeok == d0 and lost[0] == 1, "눈치 at the cap: the extra point is lost, DDEOK unchanged")
+	check(not FileAccess.get_file_as_string("res://data/config/tuning.json").contains("overflow"), "tuning.json has no 눈치 overflow setting any more")
+	gs.free()
+	var g := make_gs()
+	g.set_progress("party")
+	g.map_day = "party"
+	g.give_item("pencil_case")
+	g.give_item("bandage")
+	g.give_item("notebook")
+	g.keep_note("note_1")
+	g.add_ddeok(3)
+	g.add_nunchi(2)
+	g.damage(3)
+	g.lose_secret("pride", "hyunjeong")
+	g.mark_talked("oc01_dakji_sat")
+	g.mark_collected("map_02:party", "tv_cabinet:ddeok")
+	g.dropped.append({"kind": "item", "id": "bandage", "room": "genkan", "x": 1.0})
+	g.destroyed_notes.append("note_2")
+	check(not g.in_party(), "no checkpoint yet: not in the party")
+	g.take_party_snapshot()
+	var snap := _party_state(g)
+	check(g.in_party() and g.party_snapshot.keys().size() == g.PARTY_KEYS.size(), "the snapshot holds hearts, 눈치, cards and knowers, inventory, notes, DDEOK, talked, collected, dropped")
+	g.add_nunchi(3)
+	g.damage(2)
+	g.add_ddeok(9)
+	g.lose_secret("mom_job", "eunju")
+	g.take_out_item("bag", "bandage")
+	g.remove_note("note_1")
+	g.mark_talked("ocp1_dad_party")
+	g.mark_collected("map_02:party", "fridge:trap")
+	g.dropped = []
+	g.destroyed_notes.clear()
+	g.death_reset()
+	check(same(_party_state(g), snap), "a death in the party puts the exact party-start state back")
+	check(g.progress == "party" and g.in_party(), "...and stays in the party")
+	g.party_snapshot["ddeok"] = 99
+	check(g.ddeok != 99, "the snapshot is a copy, not shared with the live state")
+	g.free()
+	var h := make_gs()
+	h.set_progress("mon_roam")
+	h.add_ddeok(4)
+	h.death_reset()
+	check(h.progress == "scene_01" and h.ddeok == 0 and h.party_snapshot.is_empty(), "a death outside the party is still the reset to Scene 01")
+	h.free()
+	check(GameStateScript.SAVE_VERSION == 4, "save version 4")
+	_clean_saves()
+	DirAccess.make_dir_recursive_absolute(SAVE_DIR)
+	var old := make_gs()
+	old.save_path = SAVE_DIR + "/v3.json"
+	var state: Dictionary = old._current_state()
+	state.erase("party_snapshot")
+	state["progress"] = "scene_02"
+	_write(old.save_path, JSON.stringify({"game": "noraebang-night", "save_version": 3, "state_version": "0.4", "state": state}))
+	var old_err: int = old.load_game()
+	check(old_err == OK and old.party_snapshot.is_empty() and old.progress == "scene_02", "a version 3 save loads with no party checkpoint (migration 3 -> 4)")
+	old.free()
+	var sv := make_gs()
+	sv.save_path = SAVE_DIR + "/v4.json"
+	sv.set_progress("party")
+	sv.give_item("pencil_case")
+	sv.add_ddeok(2)
+	sv.take_party_snapshot()
+	sv.add_ddeok(5)
+	check(sv.save_game() == OK, "a save inside the party writes")
+	var ld := make_gs()
+	ld.save_path = sv.save_path
+	check(ld.load_game() == OK and ld.progress == "party" and same(ld.party_snapshot, sv.party_snapshot) and ld.ddeok == 7 and ld.party_snapshot["ddeok"] == 2, "the party checkpoint is saved and loaded with the game")
+	var bad = JSON.parse_string(_read(sv.save_path))
+	bad["state"]["party_snapshot"]["secrets_held"] = ["pride", "bogus"]
+	bad["state"]["party_snapshot"]["hearts_halves"] = 99
+	_write(sv.save_path, JSON.stringify(bad))
+	DirAccess.remove_absolute(sv.save_path + ".bak")
+	var ld2 := make_gs()
+	ld2.save_path = sv.save_path
+	check(ld2.load_game() == OK and ld2.party_snapshot["secrets_held"] == ["pride"] and ld2.party_snapshot["hearts_halves"] == 10, "a damaged checkpoint is cleaned on load (unknown card dropped, hearts clamped)")
+	sv.free()
+	ld.free()
+	ld2.free()
+	_clean_saves()
+
+
+func _test_party_cues() -> void:
+	print("Build 6a: choices, taunts, phone lines")
+	var gs := _gs()
+	var res = load(SCENE3_DIALOGUE)
+	var names := _card_ids_by_name()
+	var box: Node = load(DIALOGUE_BOX_PATH).instantiate()
+	root.add_child(box)
+	await _frames(2)
+	var points := _doc_choice_effects(SCENE3_DOC)
+	check(points.size() == 3 and points[0].size() == 4 and points[1].size() == 4 and points[2].size() == 3, "the doc has 3 choice points with 4 / 4 / 3 options")
+	var cues := ["b", "c", "ocp1"]
+	for k in points.size():
+		var nothing: int = points[k].count("nothing")
+		check(nothing == 1, "choice point %d has exactly one neutral option" % (k + 1))
+		for i in points[k].size():
+			gs.new_game()
+			gs.set_boss("eunju")
+			var ran := await _run_cue_snaps(box, res, cues[k], Stage6aStub.new(), [i])
+			check(ran["asked"] == 1 and ran["snaps"].size() == 2, "%s option %d: one choice asked" % [cues[k], i + 1])
+			_check_effect("%s option %d (%s)" % [cues[k], i + 1, points[k][i]], points[k][i], ran["snaps"][0], ran["snaps"][1], names)
+			if points[k][i].contains("🔒"):
+				var card: String = names[points[k][i].split("🔒")[1].strip_edges().split("  (")[0].strip_edges()]
+				check(gs.knows("eunju", card) and not gs.secrets_held.has(card), "%s option %d: the lost card (%s) becomes known by eunju" % [cues[k], i + 1, card])
+	gs.new_game()
+	await _run_cue_snaps(box, res, "b", Stage6aStub.new(), [0])
+	await _run_cue_snaps(box, res, "c", Stage6aStub.new(), [0])
+	check(gs.nunchi == 2 and gs.secrets_held.size() == gs.hand.size(), "the two forced choices give at most +2 눈치")
+	# Taunts in 03-C: only the cards 은주 knows.
+	var taunts := {
+		"mom_salary": "은주: 엄마가 돈 많이 번다며? 근데 연필이야?",
+		"dad_country": "손미숙: 아프리카에도 연필 있어?",
+		"mom_job": "은주: 공장에서 가져온 거 아니야?",
+		"pride": "은주: 고맙다고 해 봐. 존댓말로.",
+	}
+	var all_taunts: Array = taunts.values()
+	gs.new_game()
+	var none := await _run_cue_snaps(box, res, "c", Stage6aStub.new(), [3])
+	check(all_taunts.filter(func(l): return none["lines"].has(l)).is_empty(), "no card known to 은주: no taunts")
+	for card in taunts:
+		gs.new_game()
+		gs.lose_secret(card, "eunju")
+		var ran := await _run_cue_snaps(box, res, "c", Stage6aStub.new(), [3])
+		check(all_taunts.filter(func(l): return ran["lines"].has(l)) == [taunts[card]], "only %s known: only its taunt" % card)
+	gs.new_game()
+	for card in ["our_home", "dad_story", "dad_drinking"]:
+		gs.lose_secret(card, "eunju")
+	var quiet := await _run_cue_snaps(box, res, "c", Stage6aStub.new(), [3])
+	check(all_taunts.filter(func(l): return quiet["lines"].has(l)).is_empty(), "cards with no taunt (우리 집, 아빠 이야기, 아빠 주량) add none")
+	gs.new_game()
+	for card in taunts:
+		gs.lose_secret(card, "eunju")
+	var before_taunt := _snapshot(gs)
+	var every := await _run_cue_snaps(box, res, "c", Stage6aStub.new(), [3])
+	check(all_taunts.filter(func(l): return every["lines"].has(l)).size() == 4, "all four known: all four taunts")
+	var idx := all_taunts.map(func(l): return every["lines"].find(l))
+	check(idx[0] < idx[1] and idx[1] < idx[2] and idx[2] < idx[3], "the taunts come in the doc's order")
+	check(_changed_keys(before_taunt, _snapshot(gs)).is_empty(), "taunts and the neutral choice change no state")
+	# The phone call in 03-E.
+	var phone := {
+		"dad_country": "은주 엄마: 에티오피아래. 거기 지금 공산당이잖아.",
+		"mom_job": "은주 엄마: 엄마는 공장 다닌대.",
+		"dad_drinking": "은주 엄마: 아빠는 술꾼이고.",
+	}
+	var lead := "은주 엄마: …응, 왔어. 그 혼혈 애. …아니, 생각보다 깨끗해."
+	var tail := "은주 엄마: …응, 끊어. 장기자랑 시작한대."
+	gs.new_game()
+	var plain := await _run_cue_snaps(box, res, "e", Stage6aStub.new(), [])
+	check(plain["lines"] == [lead, tail] and plain["asked"] == 0, "03-E with nothing known: the call and the last line only, no choices")
+	for card in phone:
+		gs.new_game()
+		gs.lose_secret(card, "eunju")
+		var snap_before := _snapshot(gs)
+		var ran := await _run_cue_snaps(box, res, "e", Stage6aStub.new(), [])
+		check(ran["lines"] == [lead, phone[card], tail], "03-E with only %s known: just its line" % card)
+		check(_changed_keys(snap_before, _snapshot(gs)).is_empty(), "03-E changes no state (%s)" % card)
+	gs.new_game()
+	for card in ["pride", "our_home", "mom_salary", "dad_story"]:
+		gs.lose_secret(card, "eunju")
+	var other := await _run_cue_snaps(box, res, "e", Stage6aStub.new(), [])
+	check(other["lines"] == [lead, tail], "03-E: cards with no phone line add none")
+	gs.new_game()
+	for card in phone:
+		gs.lose_secret(card, "eunju")
+	var all_phone := await _run_cue_snaps(box, res, "e", Stage6aStub.new(), [])
+	check(all_phone["lines"] == [lead, phone["dad_country"], phone["mom_job"], phone["dad_drinking"], tail], "03-E with all three known: all three, in the doc's order")
+	for cue in ["ocp2", "ocp3", "ocp4", "f"]:
+		gs.new_game()
+		var s0 := _snapshot(gs)
+		var ran := await _run_cue_snaps(box, res, cue, Stage6aStub.new(), [])
+		check(ran["asked"] == 0 and ran["lines"].size() >= 1 and _changed_keys(s0, _snapshot(gs)).is_empty(), "%s: no choice, no state change" % cue)
+	gs.new_game()
+	var stub := Stage6aStub.new()
+	var f := await _run_cue_snaps(box, res, "f", stub, [])
+	check(f["lines"] == ["은주: 이제 장기자랑! 장보람, 너부터.", "은주: 이 노래 몰라? 이 노래 모르는 애는… 죽어야 돼."], "03-F: the two trigger lines, word for word")
+	check(stub.calls.back() == "lights_flicker", "03-F ends with the lights flickering")
+	gs.new_game()
+	box.queue_free()
+	await _frames(1)
+
+
+## The doc's choice points as effect lists, in order: 03-B, 03-C, OC-P1.
+func _doc_choice_effects(doc_path: String) -> Array:
+	var points: Array = []
+	var current: Array = []
+	var lines := FileAccess.get_file_as_string(doc_path).split("\n")
+	for i in lines.size():
+		var line: String = lines[i]
+		if line.begins_with("03-B") or line.begins_with("03-C") or line.begins_with("OC-P1"):
+			current = []
+			points.append(current)
+		if line.strip_edges().begins_with("▸ "):
+			var effect := ""
+			for j in range(i + 1, mini(i + 3, lines.size())):
+				if lines[j].strip_edges().begins_with("→"):
+					effect = lines[j].strip_edges().substr(1).strip_edges()
+					break
+			current.append(effect)
+	return points
+
+
+## Waits for the nearest-interactable overlap, then a couple of frames for the keycap.
+func _stand_at(world: Node, node: Node3D) -> void:
+	world.player.place(node.position.x, 0)
+	await _until(func(): return world.player.current_interactable == node)
+	await _frames(2)
+
+
+func _test_party_flow() -> void:
+	print("Build 6a: Scene 03 flow, triggers in order")
+	var gs := _gs()
+	_write_progress_save("party", "party")
+	var world: Node = await _start_world(true, true)
+	var d: Node = world.director
+	check(await _await_box(world), "03-A: the dialogue opens in the elevator hall")
+	check(world.room_id == "elevator_hall" and d.phase == "p_walk" and gs.progress == "party" and gs.map_day == "party", "03-A: progress party, map_day party, in the elevator hall")
+	check(gs.party_snapshot.keys().size() == gs.PARTY_KEYS.size() and same(_party_state(gs), gs.party_snapshot), "the party checkpoint is taken at 03-A")
+	check(gs.current_boss == "eunju" and d.hyunjeong != null and d.hyunjeong.display_name == "현정", "the boss is eunju; 현정 is with 보람")
+	check(d.next_party_trigger() == "door", "the first trigger is the door")
+	var a_lines := []
+	world.dialogue_box.line_shown.connect(func(c: String, t: String): a_lines.append("%s: %s" % [c, t]))
+	await _drive_box(world)
+	check(not world.player.movement_locked and not world.dialogue_box.is_open, "03-A ends with movement unlocked")
+	var saved := make_gs()
+	saved.save_path = gs.save_path
+	check(saved.load_game() == OK and saved.progress == "party" and not saved.party_snapshot.is_empty(), "party start is autosaved with its checkpoint")
+	saved.free()
+	# The elevator hall door, by Enter; 현정 follows (the 02-E follow, reused).
+	await _stand_at(world, world.room.get_node("To_corridor"))
+	await _press("confirm")
+	check(await _until(func(): return world.room_id == "corridor" and not world.transitioning), "Enter at the elevator hall door goes to the corridor")
+	check(d.hyunjeong != null and is_instance_valid(d.hyunjeong) and d.hyunjeong.get_parent() == world.room, "현정 followed into the corridor")
+	world.player.place(0.0, 0)
+	await _frames(8)
+	check(d.phase == "p_walk" and not world.dialogue_box.is_open and d.party_fired.is_empty(), "away from the door nothing fires")
+	var n_before: int = gs.nunchi
+	world.player.place(5.0, 0)
+	check(await _await_box(world), "reaching the door starts 03-B")
+	check(d.phase == "p_b" and world.player.movement_locked and d.party_fired.has("door") and not d.party_fired.has("presents"), "03-B: movement locked, the door trigger fired first")
+	check(d.actors.has("eunju_mom") and d.actors.has("eunju") and d.actors["eunju_mom"].display_name == "은주 엄마", "은주 엄마 and 은주 are at the door (placeholder actors with labels)")
+	var b_lines := []
+	world.dialogue_box.line_shown.connect(func(c: String, t: String): b_lines.append("%s: %s" % [c, t]))
+	await _drive_box(world, [0], func(): return d.phase != "p_b")
+	check(b_lines.has("은주 엄마: …어머, 인사성은 밝네. 들어와.") and gs.nunchi == n_before + 1, "choice 1 option A (real keys): +1 눈치 and the mother's reply")
+	check(await _until(func(): return world.room_id == "living_room" and d.phase == "p_c"), "03-C: fade into the 거실")
+	check(d.party_fired.has("presents") and world.player.movement_locked, "03-C: movement locked")
+	var names: Array = d.actors.values().map(func(a): return a.display_name)
+	names.sort()
+	var want := ["은주", "은주 엄마", "은주 아빠", "현정", "미숙", "미경", "철수", "동진", "최은주", "한은주"]
+	want.sort()
+	check(names == want, "the 거실 cast: 은주, 은주 엄마, 은주 아빠, 현정 and the six classmates")
+	check(await _await_box(world), "03-C: the dialogue plays")
+	var c_lines := []
+	world.dialogue_box.line_shown.connect(func(c: String, t: String): c_lines.append("%s: %s" % [c, t]))
+	await _drive_box(world, [0], func(): return d.phase != "p_c")
+	check(c_lines.has("은주: …진짜?") and gs.nunchi == n_before + 2, "choice 2 option A: +1 눈치 (two forced choices: +2)")
+	check(await _until(func(): return d.phase == "p_roam" and not world.player.movement_locked), "03-D: the roam opens, movement unlocked")
+	check(gs.progress == "party" and d.next_party_trigger() == "bathroom", "after the presents the next trigger is the bathroom")
+	var talk_spots: Array = world.room.get_children().filter(func(n): return n.has_meta("talk_id"))
+	var ids := talk_spots.map(func(n): return n.get_meta("talk_id"))
+	ids.sort()
+	check(ids == ["ocp1", "ocp2", "ocp3", "ocp4"], "OC-P1 to OC-P4 have talk spots in the 거실")
+	var talkers: Array = world.room.get_children().filter(func(n): return n.has_meta("oc")).map(func(n): return n.display_name)
+	talkers.sort()
+	var want_talkers := ["은주 아빠", "철수", "동진", "최은주", "한은주", "현정"]
+	want_talkers.sort()
+	check(talkers == want_talkers, "the talkers are 은주 아빠, 철수, 동진, 최은주, 한은주, 현정")
+	for id in ["ocp2", "ocp3", "ocp4"]:
+		var spot: Node3D = talk_spots.filter(func(n): return n.get_meta("talk_id") == id)[0]
+		var s0 := _snapshot(gs)
+		await _stand_at(world, spot)
+		await _press("confirm")
+		check(await _await_box(world), "%s starts with Enter" % id)
+		await _drive_box(world)
+		check(_changed_keys(s0, _snapshot(gs)) == ["talked"], "%s changes nothing but the talked list" % id)
+		await _press("confirm")
+		check(world._text_open and world._text_label.text == "[placeholder] repeat line", "%s: the repeat is one placeholder line" % id)
+		await _close_text(world)
+	# OC-P1: the stakes, once per save.
+	var dad: Node3D = talk_spots.filter(func(n): return n.get_meta("talk_id") == "ocp1")[0]
+	await _stand_at(world, dad)
+	var nun: int = gs.nunchi
+	await _press("confirm")
+	check(await _await_box(world), "OC-P1 starts with Enter")
+	await _drive_box(world, [1])
+	check(not gs.secrets_held.has("dad_drinking") and gs.knows("eunju", "dad_drinking") and gs.nunchi == nun and gs.has_talked("ocp1_dad_party"), "OC-P1 B: −1 아빠 주량, known by 은주 (she listens); saved in talked")
+	var after := _snapshot(gs)
+	await _press("confirm")
+	check(world._text_open and world._text_label.text == "[placeholder] repeat line" and _changed_keys(after, _snapshot(gs)).is_empty(), "OC-P1 pays once: the second talk is a repeat line with no effect")
+	await _close_text(world)
+	check(world.collected_key() == "map_02:party", "finds are saved under map_02:party")
+	var kc := _kind_counts(world.layout)
+	check(kc["ddeok"] == 2 and kc["trap"] == 2 and kc["note"] + kc["health"] == 1, "the dealt layout is 2 DDEOK, 2 traps, 1 extra")
+	check(world.layout.keys().all(func(k): return ["decor_cabinet", "sofa", "fridge", "tv_cabinet", "cake_table", "genkan_shoes", "kitchen_cupboard", "hallway_closet"].has(k)), "only Map 02 spots are dealt")
+	# Entering the 거실 before 03-E does not start 03-F.
+	check(not d.party_fired.has("bathroom") and not d.party_fired.has("living"), "03-E and 03-F have not fired yet")
+	world.enter_room("genkan", "from_living_room")
+	await _frames(6)
+	var out: Node3D = world.room.get_node("To_corridor")
+	await _stand_at(world, out)
+	await _press("confirm")
+	check(world._text_open and world.room_id == "genkan", "the 현관 door back to the corridor is locked")
+	await _close_text(world)
+	await _stand_at(world, world.room.get_node("To_living_room"))
+	await _press("confirm")
+	check(await _until(func(): return world.room_id == "living_room" and not world.transitioning), "walking back into the 거실")
+	await _frames(10)
+	check(d.phase == "p_roam" and not d.party_fired.has("living"), "entering the 거실 before 03-E does not start 03-F")
+	# 03-E: the 화장실 through the doors.
+	world.enter_room("inner_hallway", "from_living_room")
+	await _frames(4)
+	gs.lose_secret("dad_country", "eunju")
+	await _stand_at(world, world.room.get_node("To_bathroom"))
+	await _press("confirm")
+	check(await _until(func(): return d.party_fired.has("bathroom")), "entering the 화장실 fires 03-E")
+	check(await _await_box(world), "03-E: after the fade, 보람 is in the 복도 and the call plays")
+	check(world.room_id == "inner_hallway" and d.phase == "p_e" and world.player.movement_locked and d.actors.has("eunju_mom"), "03-E: back in the 복도, locked, 은주 엄마 on the phone")
+	var e_lines := []
+	world.dialogue_box.line_shown.connect(func(c: String, t: String): e_lines.append("%s: %s" % [c, t]))
+	await _drive_box(world)
+	check(e_lines.has("은주 엄마: 에티오피아래. 거기 지금 공산당이잖아.") and e_lines.back() == "은주 엄마: …응, 끊어. 장기자랑 시작한대.", "03-E: the conditional line (아빠 나라 known) and the last line")
+	check(await _until(func(): return d.phase == "p_back" and not world.player.movement_locked), "03-E ends with movement unlocked")
+	check(d.next_party_trigger() == "living", "the last trigger is the 거실")
+	await _stand_at(world, world.room.get_node("To_living_room"))
+	await _press("confirm")
+	check(await _until(func(): return d.party_fired.has("living")), "entering the 거실 after 03-E fires 03-F")
+	check(await _await_box(world), "03-F: the two lines")
+	check(d.phase == "p_f" and world.player.movement_locked, "03-F: movement locked")
+	check(d.party_fired.keys() == ["door", "presents", "bathroom", "living"], "triggers fired in order: door, presents, bathroom, living")
+	await _drive_box(world)
+	check(await _until(func(): return world.fight != null), "03-F ends by starting the Boss 1 fight")
+	check(gs.progress == "boss1_fight" and gs.in_fight and not world.end_card_shown, "progress boss1_fight, in the fight, no end card")
+	var saved2 := make_gs()
+	saved2.save_path = gs.save_path
+	check(saved2.load_game() == OK and saved2.progress == "boss1_fight" and saved2.in_fight, "boss1_fight is autosaved at the fight start")
+	saved2.free()
+	await _stop_world(world)
+	gs.new_game()
+
+
+func _test_party_death_and_resume() -> void:
+	print("Build 6a: party death, resume, Map 01 death")
+	var gs := _gs()
+	_write_progress_save("party", "party")
+	var world: Node = await _start_world(true, true)
+	var d: Node = world.director
+	await _await_box(world)
+	await _drive_box(world)
+	var start_state := _party_state(gs)
+	check(same(start_state, gs.party_snapshot), "(setup) the checkpoint is the party-start state")
+	gs.add_nunchi(2)
+	gs.lose_secret("pride", "eunju")
+	gs.add_ddeok(3)
+	gs.give_item("pencil_case")
+	gs.mark_talked("ocp1_dad_party")
+	world.enter_room("living_room", "from_genkan")
+	d._set_phase("p_roam", false)
+	world.layout = {"tv_cabinet": {"kind": "ddeok", "amount": 1}, "sofa": {"kind": "trap", "name": "Fork under the cushion", "damage": 1}}
+	await _stand_at(world, _spot_node(world.room, "tv_cabinet"))
+	await _press("confirm")
+	check(gs.is_collected("map_02:party", "tv_cabinet:ddeok") and gs.ddeok == 4, "a find in Map 02 is recorded under map_02:party")
+	await _close_text(world)
+	check(not same(_party_state(gs), start_state), "(setup) the state has moved on from the checkpoint")
+	gs.hearts_halves = 1
+	await _stand_at(world, _spot_node(world.room, "sofa"))
+	await _press("confirm")
+	check(world._game_over and world.flashes >= 1, "a trap death in Map 02 shows the usual game-over screen")
+	await _press("confirm")
+	check(await _until(func(): return world.room_id == "elevator_hall" and d.phase == "p_walk" and not world._game_over), "...and Enter restarts at 03-A in the elevator hall")
+	check(same(_party_state(gs), start_state), "a trap death in Map 02 restores the party-start snapshot exactly")
+	check(gs.progress == "party" and gs.map_day == "party", "...still in the party")
+	var searched: Array = gs.collected.get("map_02:party", []).map(func(e): return str(e).split(":")[0])
+	check(world.layout.keys().all(func(k): return not searched.has(k)), "the new deal never covers a spot the checkpoint says was searched")
+	var kc := _kind_counts(world.layout)
+	check(kc["ddeok"] == 2 and kc["trap"] == 2, "the deal is made anew for the restarted party")
+	check(await _await_box(world), "03-A plays again after the restart")
+	await _drive_box(world)
+	await _stop_world(world)
+	# A relaunch inside the party resumes at 03-A with the checkpoint.
+	var g := make_gs()
+	g.save_path = gs.save_path
+	g.set_progress("party")
+	g.map_day = "party"
+	g.add_ddeok(2)
+	g.take_party_snapshot()
+	var snap2: Dictionary = g.party_snapshot.duplicate(true)
+	g.add_ddeok(10)
+	g.lose_secret("our_home", "eunju")
+	g.save_game()
+	g.free()
+	world = await _start_world(true, true)
+	check(await _await_box(world), "resume: a relaunch with progress party plays 03-A")
+	check(world.room_id == "elevator_hall" and world.director.phase == "p_walk", "resume: back in the elevator hall at party start")
+	check(same(_party_state(gs), snap2) and gs.secrets_held.has("our_home"), "resume: the checkpoint's state, not the half-played one")
+	await _drive_box(world)
+	await _stop_world(world)
+	# A death in Map 01 still goes to Scene 01.
+	_write_progress_save("mon_roam", "mon")
+	world = await _start_world(true, true)
+	gs.damage(gs.hearts_halves)
+	check(world._game_over, "dying in Map 01 shows the game-over screen")
+	await _press("confirm")
+	check(await _until(func(): return not world._game_over), "Enter restarts")
+	check(gs.progress == "scene_01" and gs.party_snapshot.is_empty() and world.room_id == "classroom_1_3" and world.director.phase in ["a", "a2", "a3"], "a death in Map 01 restarts Scene 01 in 1학년 3반")
+	await _stop_world(world)
+	check(_parse_args(["--skip-to", "party"])["skip_to"] == "party", "--skip-to party is a launch argument")
+	_write_progress_save("scene_01", "sat")
+	world = await _start_world(true, false)
+	world._apply_skip_to("party")
+	check(gs.progress == "party" and gs.map_day == "party", "--skip-to party sets progress party and the party day")
+	await _stop_world(world)
+	gs.new_game()
+
+
+## Plays Scene 03 from 03-A to the fight: the real keys for the dialogue and the doors, the room
+## changes of the roam and the phone call by `enter_room` (as the party capture does).
+func _play_party_to_fight(world: Node) -> bool:
+	var d: Node = world.director
+	if not await _await_box(world):
+		return false
+	await _drive_box(world)
+	world.enter_room("corridor", "from_elevator_hall")
+	world.player.place(5.0, 0)
+	if not await _await_box(world):
+		return false
+	await _drive_box(world, [0], func(): return d.phase != "p_b")
+	if not await _until(func(): return d.phase == "p_c"):
+		return false
+	await _await_box(world)
+	await _drive_box(world, [0], func(): return d.phase != "p_c")
+	if not await _until(func(): return d.phase == "p_roam" and not world.player.movement_locked):
+		return false
+	world.enter_room("inner_hallway", "from_living_room")
+	await _frames(4)
+	await _stand_at(world, world.room.get_node("To_bathroom"))
+	await _press("confirm")
+	if not await _until(func(): return d.party_fired.has("bathroom")):
+		return false
+	await _await_box(world)
+	await _drive_box(world)
+	if not await _until(func(): return d.phase == "p_back" and not world.player.movement_locked):
+		return false
+	await _stand_at(world, world.room.get_node("To_living_room"))
+	await _press("confirm")
+	if not await _until(func(): return d.party_fired.has("living")):
+		return false
+	await _await_box(world)
+	await _drive_box(world)
+	return await _until(func(): return world.fight != null, 600)
+
+
+## Answers the running fight's blanks with the real keys until `until` is true (the right option,
+## or a wrong one when `right` is false). The fight runs fast; false if `until` never came true.
+func _play_fight_until(fight: Node3D, until: Callable, right := true) -> bool:
+	fight.time_scale = 40.0
+	var guard := 0
+	while not until.call() and guard < 4000:
+		if fight.state == fight.State.FREEZE:
+			var answer := str(fight.logic.current()["answer"])
+			var pick: int = fight.options.find(answer)
+			if not right:
+				pick = 0 if pick != 0 else 1
+			fight.selected = pick
+			fight._paint_options()
+			await _press("confirm")
+		else:
+			await _frames(1)
+		guard += 1
+	return until.call()
+
+
+## Build 6b: Monday -> party -> Boss 1 -> summary -> end card, through the real chain.
+func _test_chain_6b() -> void:
+	print("Build 6b: Monday -> party -> fight -> summary -> end card")
+	var gs := _gs()
+	_write_progress_save("mon_roam", "mon")
+	var world: Node = await _start_world(true, true)
+	check(not gs.has_bag(), "(setup) no bag at Monday's end")
+	# Monday's exit: the 11월 3일 title card, then the party at 03-A.
+	world._load_room("alley", "")
+	world.fade_time = 0.02
+	world.title_hold = 0.2
+	world.player.place(world.room.get_node("To_home").position.x, 0)
+	await _frames(3)
+	await _press("confirm")
+	check(await _until(func(): return world._title_label.visible, 120) and world._title_label.text == "1979년 11월 3일 토요일" and world.player.movement_locked, "the Monday exit shows the title card 1979년 11월 3일 토요일")
+	check(await _until(func(): return gs.progress == "party" and world.room_id == "elevator_hall" and not world._title_label.visible, 300), "...then the party at 03-A with progress party")
+	check(not world.end_card_shown and not gs.party_snapshot.is_empty() and same(_party_state(gs), gs.party_snapshot), "no end card; the checkpoint is taken")
+	var saved := make_gs()
+	saved.save_path = gs.save_path
+	check(saved.load_game() == OK and saved.progress == "party" and not saved.party_snapshot.is_empty(), "the party start is autosaved")
+	saved.free()
+	world.fade_time = 0.0
+	# 03-A plays first (Enter goes to the dialogue while it is open); then a death restores the checkpoint.
+	check(await _await_box(world), "03-A plays")
+	await _drive_box(world)
+	check(await _until(func(): return world.director.phase == "p_walk" and not world.player.movement_locked), "03-A is over, movement free")
+	var start_state: Dictionary = gs.party_snapshot.duplicate(true)
+	gs.add_ddeok(5)
+	gs.damage(gs.hearts_halves)
+	check(world._game_over, "dying in the party shows the game-over screen")
+	await _press("confirm")
+	check(await _until(func(): return not world._game_over and world.room_id == "elevator_hall") and gs.progress == "party" and same(_party_state(gs), start_state), "...Enter restores the party checkpoint and restarts 03-A (not Scene 01)")
+	# 03-A to 03-F, then the fight.
+	check(await _play_party_to_fight(world), "03-F ends by starting the Boss 1 fight")
+	var fight: Node3D = world.fight
+	check(gs.progress == "boss1_fight" and gs.in_fight and gs.current_boss == "eunju" and not gs.fight_snapshot.is_empty(), "progress boss1_fight, the fight-start snapshot taken")
+	check(world.room == null and not world.player.visible and not world.end_card_shown, "the map is gone, no end card")
+	var on_file := make_gs()
+	on_file.save_path = gs.save_path
+	check(on_file.load_game() == OK and on_file.progress == "boss1_fight" and on_file.in_fight and not on_file.fight_snapshot.is_empty(), "boss1_fight is autosaved at the fight start")
+	on_file.free()
+	var snap_hearts: int = int(gs.fight_snapshot["hearts_halves"])
+	# A game over retries the fight with the fight-start snapshot, never the party.
+	var party_before: Dictionary = gs.party_snapshot.duplicate(true)
+	await _frames(2)
+	check(await _play_fight_until(fight, func(): return fight.state == fight.State.FREEZE), "the fight reaches its first blank")
+	fight.time_scale = 1.0
+	gs.hearts_halves = 1
+	check(await _play_fight_until(fight, func(): return fight.state == fight.State.GAME_OVER, false), "a wrong answer on the last half heart is the fight's game over")
+	check(not world._game_over and gs.progress == "boss1_fight", "...the world's game over did not come up")
+	await _press("confirm")
+	check(fight.state == fight.State.PLAYING and fight.retries == 1 and gs.hearts_halves == snap_hearts and gs.progress == "boss1_fight" and gs.in_fight, "Enter retries the fight with the fight-start snapshot")
+	check(same(gs.party_snapshot, party_before) and world.room == null, "...the party was not restored")
+	# Resume at boss1_fight: a relaunch is the fight start with its snapshot.
+	gs.hearts_halves = 4
+	gs.save_game()
+	await _stop_world(world)
+	world = await _start_world(true, true)
+	check(world.fight != null and gs.progress == "boss1_fight" and gs.in_fight and gs.hearts_halves == snap_hearts, "resume boss1_fight: the fight start, hearts from the snapshot")
+	check(world.fight.logic.current()["n"] == 1 and world.fight.state == world.fight.State.PLAYING, "...from the first blank")
+	# Win it with no wrong answer.
+	fight = world.fight
+	check(await _play_fight_until(fight, func(): return fight.state == fight.State.RESULT), "every blank right: the results")
+	fight.time_scale = 1.0
+	check(fight.last_result["outcome"] == "revenge" and gs.progress == "boss1_done" and not gs.in_fight, "revenge; progress boss1_done")
+	check(gs.inventory["bag"] == "pencil_case" and gs.last_rewards == ["pencil_case"], "the revenge win with no bag hands over the 필통 (real chain)")
+	var done := make_gs()
+	done.save_path = gs.save_path
+	check(done.load_game() == OK and done.progress == "boss1_done" and done.inventory["bag"] == "pencil_case", "boss1_done is autosaved with the 필통")
+	done.free()
+	check(not world.summary_shown, "the results card comes before the summary")
+	var clock = fight.clock
+	await _press("confirm")
+	check(await _until(func(): return world.summary_shown), "Enter on the results: the summary screen")
+	await _frames(3)
+	check(world.summary_shown and not world.boss1_end_shown and world._summary_label.visible and world.end_card_shown, "...and it stays up (the same Enter did not skip it)")
+	var text: String = world._summary_label.text
+	var lost: Array = gs.hand.filter(func(c): return not gs.secrets_held.has(c))
+	var want_lines := [
+		"SUMMARY [placeholder]",
+		"Hearts: %s / %s" % [world.hearts_text(gs.hearts_halves), world.hearts_text(gs.hearts_max_halves)],
+		"Nunchi: %d / %d" % [gs.nunchi, gs.nunchi_cap],
+		"DDEOK: %d" % gs.ddeok,
+		"Lost cards: %s" % ("none" if lost.is_empty() else ", ".join(lost)),
+		"Items: 필통",
+	]
+	check(Array(text.split("\n").slice(0, 6)) == want_lines, "the summary lists exactly the GameState values: %s" % str(text.split("\n").slice(0, 6)))
+	check(world.summary_lines() == want_lines and text.contains("필통"), "...with the 필통 by its Korean name")
+	var pos_summary: float = clock.get_position()
+	check(world.fight != null and fight.state == fight.State.END and clock.is_playing(), "the song is still playing under the summary")
+	await _press("confirm")
+	check(await _until(func(): return world.boss1_end_shown), "Enter on the summary: the end card")
+	check(world._end_label.visible and world._end_label.text.begins_with("[placeholder] END OF BUILD — Boss 1 complete") and not world._summary_label.visible and world.end_card_shown, "the end card text")
+	check(clock.is_playing() and clock.get_position() >= pos_summary, "the song is still playing under the end card")
+	var card_save := make_gs()
+	card_save.save_path = gs.save_path
+	check(card_save.load_game() == OK and card_save.progress == "boss1_done", "boss1_done stays saved on the end card")
+	card_save.free()
+	# Enter on the end card starts a new game and stops the song.
+	await _press("confirm")
+	check(await _until(func(): return not world.boss1_end_shown and world.room_id == "classroom_1_3"), "Enter on the end card starts a new game in 1학년 3반")
+	check(world.fight == null and not clock.is_playing(), "the fight is gone and the song stopped")
+	check(gs.progress == "scene_01" and not gs.has_bag() and gs.hearts_halves == gs.hearts_max_halves and gs.party_snapshot.is_empty() and not world.end_card_shown and world.player.visible, "everything reset to Scene 01")
+	check(world.director.phase in ["a", "a2", "a3"], "Scene 01 begins")
+	await _stop_world(world)
+	# Resume at boss1_done: the end card; Enter starts a new game.
+	_write_progress_save("boss1_done", "party")
+	world = await _start_world(true, true)
+	check(world.boss1_end_shown and world.end_card_shown and world._end_label.visible and world.fight == null and world.player.movement_locked, "resume boss1_done: the end card")
+	await _press("confirm")
+	check(await _until(func(): return gs.progress == "scene_01" and not world.boss1_end_shown), "...Enter starts a new game")
+	await _stop_world(world)
+	# Dev args: --skip-to boss1_fight starts the fight from the chain (not via --fight); boss1_done the end card.
+	check(_parse_args(["--skip-to", "boss1_fight"])["skip_to"] == "boss1_fight" and _parse_args(["--skip-to", "boss1_done"])["skip_to"] == "boss1_done", "--skip-to boss1_fight and boss1_done are launch arguments")
+	_write_progress_save("boss1_fight", "party")
+	world = await _start_world(true, false)
+	check(world.fight != null and gs.in_fight and gs.progress == "boss1_fight" and not world.fight.check_mode, "progress boss1_fight starts the fight from the chain (what --skip-to boss1_fight sets)")
+	check(await _play_fight_until(world.fight, func(): return world.fight.state == world.fight.State.RESULT), "(the chain's fight can be won)")
+	check(gs.progress == "boss1_done", "...and ends at boss1_done")
+	await _stop_world(world)
+	_write_progress_save("scene_01", "sat")
+	world = await _start_world(true, false)
+	world._apply_skip_to("boss1_done")
+	check(gs.progress == "boss1_done", "--skip-to boss1_done sets the progress")
+	await _stop_world(world)
+	# Map 01 still restarts Scene 01 on death.
+	_write_progress_save("mon_roam", "mon")
+	world = await _start_world(true, true)
+	gs.damage(gs.hearts_halves)
+	await _press("confirm")
+	check(await _until(func(): return not world._game_over) and gs.progress == "scene_01" and gs.party_snapshot.is_empty(), "a death in Map 01 still restarts Scene 01")
+	await _stop_world(world)
+	gs.new_game()
+
+
+## The revenge reward, through the real fight end flow: World.start_fight with a live fight,
+## every blank answered with the real keys, then the saved game and a relaunch.
+func _test_reward_real_flow() -> void:
+	print("Build 6a: the revenge reward through the real fight end flow")
+	var gs := _gs()
+	_clean_world_saves()
+	var world: Node = await _start_world()
+	gs.new_game()
+	check(not gs.has_bag(), "(setup) 보람 has no bag")
+	var fight: Node3D = world.start_fight("eunju", "", false, false)
+	await _frames(2)
+	fight.time_scale = 40.0
+	var guard := 0
+	while fight.state != fight.State.RESULT and guard < 4000:
+		if fight.state == fight.State.FREEZE:
+			fight.selected = fight.options.find(str(fight.logic.current()["answer"]))
+			fight._paint_options()
+			await _press("confirm")
+		else:
+			await _frames(1)
+		guard += 1
+	check(fight.state == fight.State.RESULT and fight.last_result["outcome"] == "revenge" and gs.hearts_halves == gs.hearts_max_halves, "a full win with no wrong answer: revenge, hearts full")
+	check(gs.inventory["bag"] == "pencil_case" and gs.last_rewards == ["pencil_case"], "the revenge win hands over the 필통 at once")
+	check(fight._card_body.text.contains("필통"), "the revenge card names it")
+	var onfile := make_gs()
+	onfile.save_path = gs.save_path
+	check(onfile.load_game() == OK and onfile.inventory["bag"] == "pencil_case" and not onfile.in_fight and onfile.outcomes.get("eunju") == "revenge", "the saved game has the 필통 and the revenge")
+	onfile.free()
+	await _press("confirm")
+	await _press("confirm")
+	check(fight.state == fight.State.END and gs.inventory["bag"] == "pencil_case", "pressing through the card to the end keeps it")
+	await _stop_world(world)
+	world = await _start_world(true, false)
+	check(gs.inventory["bag"] == "pencil_case", "after a relaunch the 필통 is in the inventory")
+	await _ikey(KEY_TAB)
+	check(world.item_ui.is_open, "Tab opens the inventory once there is a bag")
+	await _ikey(KEY_TAB)
+	await _stop_world(world)
+	gs.new_game()

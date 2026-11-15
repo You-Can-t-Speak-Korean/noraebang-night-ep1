@@ -1,0 +1,95 @@
+{
+	"map": "map_02",
+	"_comment": "Party finds (Build 6a), same deal as the school: 2 DDEOK, 1 extra with map_01's weights, 2 traps. Only three spots carry a trap (the 장식장, the sofa, the fridge); the other spots hold rewards only. Damage is in halves (2 = a whole heart). Names are English dev labels.",
+	"budgets": {
+		"party": {
+			"ddeok": 2,
+			"ddeok_amount": 1,
+			"extras": 1,
+			"traps": 2
+		}
+	},
+	"extras": {
+		"note": {
+			"kind": "note",
+			"weight": 2
+		},
+		"bandage": {
+			"kind": "health",
+			"weight": 2,
+			"name": "반창고",
+			"heal": 1
+		},
+		"red_medicine": {
+			"kind": "health",
+			"weight": 1,
+			"name": "빨간약",
+			"heal": 2
+		}
+	},
+	"spots": {
+		"decor_cabinet": {
+			"room": "living_room",
+			"days": [
+				"party"
+			],
+			"trap": {
+				"name": "Liquor bottle falls",
+				"damage": 2,
+				"weight": 1
+			}
+		},
+		"sofa": {
+			"room": "living_room",
+			"days": [
+				"party"
+			],
+			"trap": {
+				"name": "Fork under the cushion",
+				"damage": 1,
+				"weight": 8
+			}
+		},
+		"fridge": {
+			"room": "living_room",
+			"days": [
+				"party"
+			],
+			"trap": {
+				"name": "Fridge door slams on her fingers",
+				"damage": 1,
+				"weight": 8
+			}
+		},
+		"tv_cabinet": {
+			"room": "living_room",
+			"days": [
+				"party"
+			]
+		},
+		"cake_table": {
+			"room": "living_room",
+			"days": [
+				"party"
+			]
+		},
+		"genkan_shoes": {
+			"room": "genkan",
+			"days": [
+				"party"
+			]
+		},
+		"kitchen_cupboard": {
+			"room": "kitchen",
+			"days": [
+				"party"
+			]
+		},
+		"hallway_closet": {
+			"room": "inner_hallway",
+			"days": [
+				"party"
+			]
+		}
+	}
+}

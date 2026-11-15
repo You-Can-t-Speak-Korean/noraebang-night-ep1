@@ -1,0 +1,146 @@
+# SCENE 03 — 김은주 생일 파티 (Boss 1 pre-fight map)
+# Source: docs/scripts/scene-03-eunju-party-v0.1.md (every Korean line verbatim).
+#
+# Stage directions are calls on the scene director (scripts/scene_director.gd).
+# No other game logic lives here. Writer's rule: every choice does exactly ONE
+# thing: +1 눈치, -1 비밀, or nothing. Lost cards are told to 은주 explicitly
+# (she is at the door, opens the presents and listens from the cake table).
+# Cues: a (03-A), b (03-B), c (03-C), ocp1 to ocp4 (03-D), e (03-E), f (03-F).
+
+# ── 03-A  THE ELEVATOR (movement free) ────────────────────────
+~ a
+
+$> GameState.set_boss("eunju")
+현정: 와, 엘리베이터 진짜 빠르다!
+$> hyunjeong_looks_at_gift()
+현정: 너 선물 뭐 샀어? …아, 귀엽다.
+=> END
+
+# ── 03-B  THE DOOR, CHOICE 1 (movement locked) ───────────────
+~ b
+
+$> door_opens()
+은주 엄마: 어머, 현정이 왔구나! 엄마는 잘 계시지? 들어와, 들어와.
+$> mother_looks_over()
+은주 엄마: …그리고 너는? 아, 네가 그 보람이구나. 은주한테 얘기 많이 들었다.
+은주 엄마: 엄마는 같이 안 오셨니?
+
+- 안녕하세요. 초대해 주셔서 감사합니다.
+	$> GameState.add_nunchi(1)
+	은주 엄마: …어머, 인사성은 밝네. 들어와.
+- 엄마는 토요일에도 공장에 가세요.
+	$> GameState.lose_secret("mom_job", "eunju")
+	은주 엄마: 공장? …그렇구나. 은주야, 쟤 옆에 앉지 마.
+- 죄송해요… 엄마는 못 오세요.
+	$> GameState.lose_secret("pride", "eunju")
+	은주 엄마: 죄송할 건 없지. 원래 그런 집도 있는 거야.
+- (말없이 고개만 숙인다)
+	은주 엄마: 어머, 말을 못 하니? …들어와.
+=> END
+
+# ── 03-C  THE PRESENTS, CHOICE 2 (movement locked) ───────────
+~ c
+
+문태식: …고 박뻥희 대통령의 국장이 엄숙히 거행되고 있습니다.
+은주: 자, 선물! 현정이 거 먼저!
+$> doll_unwrapped()
+$> eunju_picks_up_gift()
+은주: 이건 뭐야? 신문지야?
+$> pencils_shown()
+은주: 연필? 얘는 연필 사 왔대!
+$> twins_laugh()
+
+- 그거 우리 선생님이 쓰는 연필이랑 똑같은 거야.
+	$> GameState.add_nunchi(1)
+	$> eunju_pockets_pencils()
+	은주: …진짜?
+- 우리 집에선 생일에 인제라 먹어. 이런 케이크 처음 봐.
+	$> GameState.lose_secret("our_home", "eunju")
+	은주: 인제라? 그게 뭐야? 이름도 이상해.
+- 미안해… 비싼 거 못 사서.
+	$> GameState.lose_secret("pride", "eunju")
+	은주: 괜찮아. 엄마가 그러는데, 원래 그런 집도 있대.
+- (아무 말도 안 한다)
+	$> eunju_tosses_pencils()
+	은주: 흥.
+
+# Taunts, only for cards 은주 knows (no choices, no state).
+if GameState.knows("eunju", "mom_salary")
+	은주: 엄마가 돈 많이 번다며? 근데 연필이야?
+if GameState.knows("eunju", "dad_country")
+	손미숙: 아프리카에도 연필 있어?
+if GameState.knows("eunju", "mom_job")
+	은주: 공장에서 가져온 거 아니야?
+if GameState.knows("eunju", "pride")
+	은주: 고맙다고 해 봐. 존댓말로.
+=> END
+
+# ── 03-D  OPTIONAL CONVERSATIONS (movement free) ─────────────
+# OC-P1  은주 아빠 · sofa · STAKES (once per save)
+~ ocp1
+
+$> eunju_listens()
+은주 아빠: 어이, 꼬마. 이리 와 봐. 너희 아빠는 술 좀 하시냐?
+
+- 저는 어린이라서 잘 몰라요.
+	$> GameState.add_nunchi(1)
+	은주 아빠: 하하! 똑똑하네. 우리 은주보다 낫다.
+- 우리 아빠는 소주 세 병 마셔요!
+	$> GameState.lose_secret("dad_drinking", "eunju")
+	은주 아빠: 세 병? 하하, 장사네! 은주야, 들었냐?
+- (고개만 끄덕인다)
+	은주 아빠: 그래, 남자는 술이지.
+	$> dad_falls_asleep()
+=> END
+
+# OC-P2  철수, 동진 · fridge · flavor
+~ ocp2
+
+철수: 야, 냉장고에 바나나 있다!
+동진: 바나나? 진짜? 나 바나나 한 번도 안 먹어 봤어.
+철수: 하나만 먹자.
+$> fridge_slammed()
+동진: 은주 엄마 온다!
+=> END
+
+# OC-P3  최은주, 한은주 · by the TV · flavor
+~ ocp3
+
+최은주: 은주네 텔레비전 컬러래.
+한은주: 근데 왜 흑백이야?
+최은주: 몰라. 비싼 건 원래 그런가 봐.
+=> END
+
+# OC-P4  현정 · near the 복도 · flavor
+~ ocp4
+
+현정: 보람아, 화장실은 저쪽이야. 나 아까 가 봤는데, 변기 뚜껑이 털로 돼 있어.
+=> END
+
+# ── 03-E  THE BATHROOM, WALKING BACK (movement locked while it plays) ──
+~ e
+
+$> phone_call_starts()
+은주 엄마: …응, 왔어. 그 혼혈 애. …아니, 생각보다 깨끗해.
+
+# Only for cards 은주 knows (no choices, no state).
+if GameState.knows("eunju", "dad_country")
+	은주 엄마: 에티오피아래. 거기 지금 공산당이잖아.
+if GameState.knows("eunju", "mom_job")
+	은주 엄마: 엄마는 공장 다닌대.
+if GameState.knows("eunju", "dad_drinking")
+	은주 엄마: 아빠는 술꾼이고.
+
+은주 엄마: …응, 끊어. 장기자랑 시작한대.
+=> END
+
+# ── 03-F  장기자랑 (movement locked) ──────────────────────────
+~ f
+
+$> eunju_takes_mic()
+은주: 이제 장기자랑! 장보람, 너부터.
+$> number_punched_in()
+$> boram_hesitates()
+은주: 이 노래 몰라? 이 노래 모르는 애는… 죽어야 돼.
+$> lights_flicker()
+=> END

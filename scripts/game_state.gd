@@ -12,14 +12,21 @@ signal nunchi_changed(value: int)
 signal ddeok_changed(value: int)
 signal secret_lost(card: String, by: String)
 signal player_died
+signal nunchi_lost(points: int)
 signal fight_lost
 signal state_reset
 signal inventory_changed
 
 const STATE_VERSION := "0.4"
-const SAVE_VERSION := 3
+const SAVE_VERSION := 4
 const GAME_ID := "noraebang-night"
 const OUTCOMES: Array[String] = ["revenge", "survival"]
+
+## What the party checkpoint (Build 6a) keeps: the state a party death puts back.
+const PARTY_KEYS: Array[String] = [
+	"hearts_halves", "nunchi", "ddeok", "secrets_held", "secrets_known_by", "inventory", "notes",
+	"destroyed_notes", "talked", "collected", "dropped",
+]
 
 ## Fields listed here survive death_reset(). Empty for now.
 const PERSISTS_THROUGH_DEATH: Array[String] = []
@@ -36,7 +43,6 @@ const LEAKS_PATH := "res://data/secrets/act1_leaks.json"
 const DEFAULT_MAP_DAY := "sat"
 const DEFAULT_HEARTS_MAX_HALVES := 10
 const DEFAULT_NUNCHI_CAP := 7
-const DEFAULT_OVERFLOW_RATE := 1
 const DEFAULT_HAND: Array[String] = [
 	"dad_country", "dad_story", "our_home", "mom_job", "mom_salary", "dad_drinking", "pride",
 ]
@@ -44,7 +50,6 @@ const DEFAULT_HAND: Array[String] = [
 # ── Tunables and content (loaded from data/, never saved) ──────────────
 var hearts_max_halves: int = DEFAULT_HEARTS_MAX_HALVES
 var nunchi_cap: int = DEFAULT_NUNCHI_CAP
-var nunchi_overflow_ddeok_per_point: int = DEFAULT_OVERFLOW_RATE
 var hand: Array[String] = DEFAULT_HAND.duplicate()
 ## person id -> Array[String] of people who learn what that person learns (one hop).
 var leaks: Dictionary = {}
@@ -80,6 +85,8 @@ var codex: Array[String] = []
 var current_boss: String = ""
 var in_fight: bool = false
 var fight_snapshot: Dictionary = {}    # {"hearts_halves": int, "nunchi": int, "inventory": Dictionary, "notes": Array}
+## The party checkpoint taken at party start (03-A): PARTY_KEYS -> value, or {} outside the party.
+var party_snapshot: Dictionary = {}
 ## Items the last end_fight handed over (ids), for the result card. Not saved.
 var last_rewards: Array[String] = []
 
@@ -120,7 +127,6 @@ static func resolve_save_path(user_args: PackedStringArray, engine_args: PackedS
 func load_data(tuning_path: String = TUNING_PATH, hand_path: String = HAND_PATH, leaks_path: String = LEAKS_PATH) -> void:
 	hearts_max_halves = DEFAULT_HEARTS_MAX_HALVES
 	nunchi_cap = DEFAULT_NUNCHI_CAP
-	nunchi_overflow_ddeok_per_point = DEFAULT_OVERFLOW_RATE
 	hand = DEFAULT_HAND.duplicate()
 	leaks = {}
 
@@ -130,7 +136,6 @@ func load_data(tuning_path: String = TUNING_PATH, hand_path: String = HAND_PATH,
 	else:
 		hearts_max_halves = _tuning_int(tuning, "hearts_max_halves", 1, DEFAULT_HEARTS_MAX_HALVES)
 		nunchi_cap = _tuning_int(tuning, "nunchi_cap", 1, DEFAULT_NUNCHI_CAP)
-		nunchi_overflow_ddeok_per_point = _tuning_int(tuning, "nunchi_overflow_ddeok_per_point", 0, DEFAULT_OVERFLOW_RATE)
 
 	var hand_data = _read_json(hand_path)
 	if typeof(hand_data) != TYPE_ARRAY or hand_data.is_empty():
@@ -190,7 +195,8 @@ func heal(halves: int) -> void:
 
 # ── 👀 눈치 and 떡 ─────────────────────────────────────────────────────
 
-## Returns the overflow (points that did not fit under the cap).
+## Returns the points that did not fit under the cap. They are simply lost (no DDEOK; 눈치 is
+## never converted), and nunchi_lost tells the UI.
 func add_nunchi(n: int) -> int:
 	if n <= 0:
 		push_warning("GameState.add_nunchi: n must be > 0 (got %d)" % n)
@@ -201,7 +207,7 @@ func add_nunchi(n: int) -> int:
 		nunchi += filled
 		nunchi_changed.emit(nunchi)
 	if overflow > 0:
-		add_ddeok(overflow * nunchi_overflow_ddeok_per_point)
+		nunchi_lost.emit(overflow)
 	return overflow
 
 
@@ -546,6 +552,7 @@ func _default_state() -> Dictionary:
 		"current_boss": "",
 		"in_fight": false,
 		"fight_snapshot": {},
+		"party_snapshot": {},
 	}
 
 
@@ -566,8 +573,41 @@ func new_game() -> void:
 	progress = "scene_01"
 
 
+## A death in the party (progress "party" with a checkpoint) puts the party-start state back and
+## stays in the party; a death anywhere else is the usual reset to Scene 01.
 func death_reset() -> void:
+	if in_party():
+		restore_party_snapshot()
+		state_reset.emit()
+		inventory_changed.emit()
+		return
 	_death_reset_keeping(PERSISTS_THROUGH_DEATH)
+
+
+func in_party() -> bool:
+	return progress == "party" and not party_snapshot.is_empty()
+
+
+## Remembers the state at party start (03-A). Everything in PARTY_KEYS, deep-copied.
+func take_party_snapshot() -> void:
+	party_snapshot = {}
+	for key in PARTY_KEYS:
+		party_snapshot[key] = _deep_copy(get(key))
+
+
+## Puts the checkpoint back (a party death, or a relaunch inside the party). False without one.
+func restore_party_snapshot() -> bool:
+	if party_snapshot.is_empty():
+		return false
+	for key in PARTY_KEYS:
+		set(key, _deep_copy(party_snapshot[key]))
+	in_fight = false
+	fight_snapshot = {}
+	hearts_changed.emit(hearts_halves)
+	nunchi_changed.emit(nunchi)
+	ddeok_changed.emit(ddeok)
+	inventory_changed.emit()
+	return true
 
 
 func _death_reset_keeping(keep: Array[String]) -> void:
@@ -668,6 +708,8 @@ func _migrate(state: Dictionary, from_version: int) -> Dictionary:
 			return _migrate_1_to_2(state)
 		2:
 			return _migrate_2_to_3(state)
+		3:
+			return _migrate_3_to_4(state)
 	push_error("GameState: no migration from save version %d" % from_version)
 	return state
 
@@ -691,6 +733,12 @@ func _migrate_1_to_2(state: Dictionary) -> Dictionary:
 ## Version 3 added the shop: old saves get every shop's full starting stock.
 func _migrate_2_to_3(state: Dictionary) -> Dictionary:
 	state["shop_stock"] = Store.starting_stock_all()
+	return state
+
+
+## Version 4 added the party checkpoint: old saves have none (outside the party there is none).
+func _migrate_3_to_4(state: Dictionary) -> Dictionary:
+	state["party_snapshot"] = {}
 	return state
 
 
@@ -762,6 +810,11 @@ func _normalize(raw: Dictionary) -> Dictionary:
 					for boss in v:
 						if OUTCOMES.has(v[boss]):
 							out[key][str(boss)] = v[boss]
+			"party_snapshot":
+				if typeof(v) == TYPE_DICTIONARY and v.has("hearts_halves") and v.has("inventory"):
+					var inner := _normalize(_party_raw(v))
+					for pk in PARTY_KEYS:
+						out[key][pk] = inner[pk]
 			"fight_snapshot":
 				if typeof(v) == TYPE_DICTIONARY and v.has("hearts_halves") and v.has("nunchi"):
 					out[key] = {
@@ -776,6 +829,15 @@ func _normalize(raw: Dictionary) -> Dictionary:
 	if not out["in_fight"]:
 		out["fight_snapshot"] = {}
 	return out
+
+
+## Only the party keys of a stored snapshot, for _normalize to check like a full state.
+func _party_raw(v: Dictionary) -> Dictionary:
+	var raw := {}
+	for pk in PARTY_KEYS:
+		if v.has(pk):
+			raw[pk] = v[pk]
+	return raw
 
 
 func _as_int(v: Variant, fallback: int) -> int:

@@ -1,0 +1,87 @@
+{
+	"_comment": "Scene 03 (Build 6a): who stands where, timings and the optional conversations. Dialogue is in scene_03.dialogue; stage directions are methods on the scene director. Rooms are in data/maps/map_02.json. Keep every actor and talk spot out of the door reach zones (a test checks it).",
+	"dialogue": "res://data/dialogue/scene_03.dialogue",
+	"boss": "eunju",
+	"start_room": "elevator_hall",
+	"start_spawn": "start",
+	"follow_distance": 1.5,
+	"follow_speed": 5.5,
+	"walk_speed": 3.0,
+	"caption_seconds": 1.0,
+	"fade_hold": 0.4,
+	"flicker_seconds": 1.2,
+	"repeat_line": "[placeholder] repeat line",
+	"door_trigger": {"room": "corridor", "door": "To_apartment", "range": 4.0},
+	"bathroom_room": "bathroom_apt",
+	"living_room": "living_room",
+	"actors": {
+		"hyunjeong": {"name": "현정", "color": [0.45, 0.75, 0.55], "lift": 0.0},
+		"eunju": {"name": "은주", "color": [0.8, 0.3, 0.35], "lift": 0.0},
+		"eunju_mom": {"name": "은주 엄마", "color": [0.7, 0.5, 0.6], "lift": 0.35},
+		"eunju_dad": {"name": "은주 아빠", "color": [0.5, 0.45, 0.35], "lift": 0.0},
+		"misuk": {"name": "미숙", "color": [0.9, 0.6, 0.45], "lift": 0.35},
+		"migyeong": {"name": "미경", "color": [0.9, 0.7, 0.4], "lift": 0.7},
+		"cheolsu": {"name": "철수", "color": [0.4, 0.55, 0.8], "lift": 0.0},
+		"dongjin": {"name": "동진", "color": [0.35, 0.7, 0.65], "lift": 0.35},
+		"choi_eunju": {"name": "최은주", "color": [0.6, 0.5, 0.8], "lift": 0.0},
+		"han_eunju": {"name": "한은주", "color": [0.7, 0.55, 0.75], "lift": 0.35}
+	},
+	"stages": {
+		"elevator": {"room": "elevator_hall", "hyunjeong": {"x": -2.0, "z": -3.0}},
+		"door": {"room": "corridor", "actors": {
+			"eunju_mom": {"x": 6.2, "z": -4.5},
+			"eunju": {"x": 5.2, "z": -4.5}
+		}},
+		"presents": {"room": "living_room", "player": {"x": -11.0, "lane": 0}, "actors": {
+			"hyunjeong": {"x": -4.0, "z": -4.5},
+			"eunju": {"x": -3.0, "z": -5.4},
+			"eunju_mom": {"x": -6.5, "z": -3.6},
+			"eunju_dad": {"x": 1.4, "z": -6.4},
+			"cheolsu": {"x": 0.0, "z": -4.5},
+			"dongjin": {"x": 1.0, "z": -4.5},
+			"choi_eunju": {"x": 2.0, "z": -4.5},
+			"han_eunju": {"x": 3.0, "z": -4.5},
+			"misuk": {"x": 7.0, "z": -4.5},
+			"migyeong": {"x": 8.0, "z": -4.5}
+		}},
+		"roam": {"room": "living_room", "actors": {
+			"eunju": {"x": 4.4, "z": -4.4},
+			"misuk": {"x": -3.0, "z": -4.8},
+			"migyeong": {"x": -2.2, "z": -5.4}
+		}},
+		"phone": {"room": "inner_hallway", "actors": {
+			"eunju_mom": {"x": 2.6, "z": -5.2}
+		}},
+		"stage": {"room": "living_room", "actors": {
+			"eunju": {"x": 8.0, "z": -4.6},
+			"eunju_dad": {"x": 1.4, "z": -6.4},
+			"hyunjeong": {"x": -4.0, "z": -4.5},
+			"cheolsu": {"x": -1.0, "z": -4.5},
+			"dongjin": {"x": 0.0, "z": -4.5},
+			"choi_eunju": {"x": 1.0, "z": -4.5},
+			"han_eunju": {"x": 2.0, "z": -4.5},
+			"misuk": {"x": 3.0, "z": -4.5},
+			"migyeong": {"x": 4.0, "z": -4.5}
+		}}
+	},
+	"conversations": {
+		"ocp1": {"room": "living_room", "talked_id": "ocp1_dad_party", "x": 1.4, "z": -6.4, "size": [1.4, 1.8, 0.4],
+			"actors": [
+				{"name": "은주 아빠", "dx": 0.0, "z": -6.4, "color": [0.5, 0.45, 0.35], "lift": 0.0}
+			]},
+		"ocp2": {"room": "living_room", "talked_id": "ocp2_fridge_party", "x": 9.4, "z": -4.8, "size": [1.4, 1.8, 0.4],
+			"actors": [
+				{"name": "철수", "dx": -0.5, "z": -4.8, "color": [0.4, 0.55, 0.8], "lift": 0.0},
+				{"name": "동진", "dx": 0.5, "z": -4.8, "color": [0.35, 0.7, 0.65], "lift": 0.35}
+			]},
+		"ocp3": {"room": "living_room", "talked_id": "ocp3_tv_party", "x": 7.3, "z": -4.8, "size": [1.4, 1.8, 0.4],
+			"actors": [
+				{"name": "최은주", "dx": -0.4, "z": -4.8, "color": [0.6, 0.5, 0.8], "lift": 0.0},
+				{"name": "한은주", "dx": 0.4, "z": -4.8, "color": [0.7, 0.55, 0.75], "lift": 0.35}
+			]},
+		"ocp4": {"room": "living_room", "talked_id": "ocp4_hyunjeong_party", "x": 12.3, "z": -4.5, "size": [0.9, 1.8, 0.4],
+			"actors": [
+				{"name": "현정", "dx": 0.0, "z": -4.5, "color": [0.45, 0.75, 0.55], "lift": 0.0}
+			]}
+	}
+}

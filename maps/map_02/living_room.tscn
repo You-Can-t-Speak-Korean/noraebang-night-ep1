@@ -1,0 +1,146 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="living_room" instance=ExtResource("1")]
+room_id = "living_room"
+room_title = "거실"
+bounds_left = -15.0
+bounds_right = 16.0
+wall_color = Color(0.62, 0.55, 0.45, 1)
+
+[node name="To_genkan" parent="." instance=ExtResource("2")]
+position = Vector3(-13.0, 0, -7.85)
+label_text = "현관"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "genkan"
+target_spawn = "from_living_room"
+
+[node name="To_kitchen" parent="." instance=ExtResource("2")]
+position = Vector3(-9.0, 0, -7.85)
+label_text = "부엌"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "kitchen"
+target_spawn = "from_living_room"
+
+[node name="To_inner_hallway" parent="." instance=ExtResource("2")]
+position = Vector3(14.5, 0, -7.85)
+label_text = "복도"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "inner_hallway"
+target_spawn = "from_living_room"
+
+[node name="from_genkan" parent="." instance=ExtResource("3")]
+position = Vector3(-13.0, 0, 0)
+
+[node name="from_kitchen" parent="." instance=ExtResource("3")]
+position = Vector3(-9.0, 0, 0)
+
+[node name="from_inner_hallway" parent="." instance=ExtResource("3")]
+position = Vector3(14.5, 0, 0)
+
+[node name="LiquorCabinet" parent="." instance=ExtResource("5")]
+position = Vector3(-5.5, 0, -7.3)
+size = Vector3(2.4, 1.9, 0.6)
+color = Color(0.45, 0.3, 0.2, 1)
+label_text = "장식장 (liquor cabinet)"
+spot_id = "decor_cabinet"
+placeholder_line = "(placeholder)"
+
+[node name="BottleA" parent="." instance=ExtResource("4")]
+position = Vector3(-6.2, 0, -7.3)
+size = Vector3(0.15, 0.4, 0.15)
+color = Color(0.7, 0.45, 0.1, 1)
+elevation = 1.0
+label_text = "양주"
+
+[node name="BottleB" parent="." instance=ExtResource("4")]
+position = Vector3(-5.5, 0, -7.3)
+size = Vector3(0.15, 0.4, 0.15)
+color = Color(0.2, 0.5, 0.3, 1)
+elevation = 1.0
+
+[node name="BottleC" parent="." instance=ExtResource("4")]
+position = Vector3(-4.8, 0, -7.3)
+size = Vector3(0.15, 0.4, 0.15)
+color = Color(0.6, 0.15, 0.15, 1)
+elevation = 1.0
+
+[node name="Sofa" parent="." instance=ExtResource("4")]
+position = Vector3(0.2, 0, -7.0)
+size = Vector3(4.2, 0.9, 1.0)
+color = Color(0.55, 0.25, 0.25, 1)
+label_text = "sofa"
+
+[node name="SofaCushion" parent="." instance=ExtResource("5")]
+position = Vector3(-1.0, 0, -6.2)
+size = Vector3(1.4, 0.5, 0.5)
+color = Color(0.65, 0.35, 0.35, 1)
+label_text = "sofa cushion"
+spot_id = "sofa"
+placeholder_line = "(placeholder)"
+
+[node name="CakeTable" parent="." instance=ExtResource("5")]
+position = Vector3(4.4, 0, -5.2)
+size = Vector3(1.6, 0.8, 1.0)
+color = Color(0.85, 0.8, 0.7, 1)
+label_text = "cake table"
+spot_id = "cake_table"
+placeholder_line = "(placeholder)"
+
+[node name="Cake" parent="." instance=ExtResource("4")]
+position = Vector3(4.4, 0, -5.2)
+size = Vector3(0.8, 0.4, 0.6)
+color = Color(0.95, 0.85, 0.9, 1)
+elevation = 0.8
+label_text = "cake"
+
+[node name="TVStand" parent="." instance=ExtResource("5")]
+position = Vector3(6.6, 0, -7.3)
+size = Vector3(1.8, 0.6, 0.7)
+color = Color(0.4, 0.3, 0.25, 1)
+label_text = "TV stand"
+spot_id = "tv_cabinet"
+placeholder_line = "(placeholder)"
+
+[node name="ColorTV" parent="." instance=ExtResource("4")]
+position = Vector3(6.6, 0, -7.3)
+size = Vector3(1.4, 0.9, 0.6)
+color = Color(0.15, 0.15, 0.17, 1)
+elevation = 0.6
+label_text = "color TV"
+
+[node name="KaraokeMachine" parent="." instance=ExtResource("4")]
+position = Vector3(8.2, 0, -7.2)
+size = Vector3(0.9, 1.1, 0.6)
+color = Color(0.3, 0.3, 0.4, 1)
+label_text = "반주기"
+
+[node name="Fridge" parent="." instance=ExtResource("5")]
+position = Vector3(11.0, 0, -7.2)
+size = Vector3(1.2, 2.0, 0.8)
+color = Color(0.8, 0.82, 0.85, 1)
+label_text = "fridge"
+spot_id = "fridge"
+placeholder_line = "(placeholder)"
+
+[node name="FloorCushionA" parent="." instance=ExtResource("4")]
+position = Vector3(-3.0, 0, -4.5)
+size = Vector3(0.6, 0.15, 0.6)
+color = Color(0.6, 0.3, 0.3, 1)
+
+[node name="FloorCushionB" parent="." instance=ExtResource("4")]
+position = Vector3(-2.0, 0, -4.5)
+size = Vector3(0.6, 0.15, 0.6)
+color = Color(0.3, 0.3, 0.6, 1)
+

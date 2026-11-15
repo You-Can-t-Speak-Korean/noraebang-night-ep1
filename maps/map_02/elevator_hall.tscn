@@ -1,0 +1,52 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="elevator_hall" instance=ExtResource("1")]
+room_id = "elevator_hall"
+room_title = "Elevator hall"
+bounds_left = -6.0
+bounds_right = 6.0
+wall_color = Color(0.55, 0.55, 0.5, 1)
+
+[node name="To_corridor" parent="." instance=ExtResource("2")]
+position = Vector3(4.0, 0, -7.85)
+label_text = "Corridor"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "corridor"
+target_spawn = "from_elevator_hall"
+
+[node name="start" parent="." instance=ExtResource("3")]
+position = Vector3(-3.5, 0, 0)
+
+[node name="ElevatorDoors" parent="." instance=ExtResource("4")]
+position = Vector3(-3.5, 0, -7.7)
+size = Vector3(2.6, 2.6, 0.2)
+color = Color(0.62, 0.62, 0.66, 1)
+label_text = "Elevator"
+
+[node name="CallPanel" parent="." instance=ExtResource("4")]
+position = Vector3(-1.6, 0, -7.7)
+size = Vector3(0.25, 0.4, 0.1)
+color = Color(0.8, 0.7, 0.3, 1)
+elevation = 1.2
+
+[node name="PotPlant" parent="." instance=ExtResource("4")]
+position = Vector3(0.2, 0, -7.2)
+size = Vector3(0.6, 1.0, 0.6)
+color = Color(0.3, 0.5, 0.3, 1)
+label_text = "plant"
+
+[node name="NoticeBoard" parent="." instance=ExtResource("4")]
+position = Vector3(1.8, 0, -7.7)
+size = Vector3(1.2, 0.8, 0.1)
+color = Color(0.7, 0.6, 0.4, 1)
+elevation = 1.2
+label_text = "notices"
+

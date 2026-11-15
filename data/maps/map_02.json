@@ -1,0 +1,14 @@
+{
+  "title": "Map 02 — 은주네 아파트 (1979)",
+  "start_room": "elevator_hall",
+  "start_spawn": "start",
+  "rooms": {
+    "elevator_hall": "res://maps/map_02/elevator_hall.tscn",
+    "corridor": "res://maps/map_02/corridor.tscn",
+    "genkan": "res://maps/map_02/genkan.tscn",
+    "living_room": "res://maps/map_02/living_room.tscn",
+    "kitchen": "res://maps/map_02/kitchen.tscn",
+    "inner_hallway": "res://maps/map_02/inner_hallway.tscn",
+    "bathroom_apt": "res://maps/map_02/bathroom_apt.tscn"
+  }
+}

@@ -1,0 +1,64 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://maps/room.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://maps/door.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://maps/spawn_point.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://maps/prop.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://maps/interactable.tscn" id="5"]
+
+[node name="corridor" instance=ExtResource("1")]
+room_id = "corridor"
+room_title = "Corridor"
+bounds_left = -10.0
+bounds_right = 10.0
+wall_color = Color(0.52, 0.5, 0.46, 1)
+
+[node name="To_elevator_hall" parent="." instance=ExtResource("2")]
+position = Vector3(-8.0, 0, -7.85)
+label_text = "Elevator hall"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "elevator_hall"
+target_spawn = "start"
+
+[node name="To_apartment" parent="." instance=ExtResource("2")]
+position = Vector3(8.0, 0, -7.85)
+label_text = "현관"
+size = Vector3(1.8, 2.8, 0.2)
+color = Color(0.2, 0.17, 0.15, 1)
+placeholder_line = "(door)"
+target_room = "genkan"
+target_spawn = "from_corridor"
+
+[node name="from_elevator_hall" parent="." instance=ExtResource("3")]
+position = Vector3(-8.0, 0, 0)
+
+[node name="from_genkan" parent="." instance=ExtResource("3")]
+position = Vector3(8.0, 0, 0)
+
+[node name="NeighbourDoorA" parent="." instance=ExtResource("4")]
+position = Vector3(-3.0, 0, -7.8)
+size = Vector3(1.6, 2.6, 0.2)
+color = Color(0.4, 0.32, 0.28, 1)
+label_text = "neighbour"
+
+[node name="NeighbourDoorB" parent="." instance=ExtResource("4")]
+position = Vector3(1.0, 0, -7.8)
+size = Vector3(1.6, 2.6, 0.2)
+color = Color(0.4, 0.32, 0.28, 1)
+label_text = "neighbour"
+
+[node name="ShoeCabinet" parent="." instance=ExtResource("4")]
+position = Vector3(-5.5, 0, -7.4)
+size = Vector3(1.6, 1.0, 0.5)
+color = Color(0.5, 0.4, 0.3, 1)
+label_text = "shoe cabinet"
+
+[node name="FireBox" parent="." instance=ExtResource("4")]
+position = Vector3(4.0, 0, -7.7)
+size = Vector3(0.7, 0.9, 0.2)
+color = Color(0.75, 0.2, 0.2, 1)
+elevation = 1.0
+label_text = "fire box"
+

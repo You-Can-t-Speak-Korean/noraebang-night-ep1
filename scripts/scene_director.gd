@@ -9,7 +9,10 @@
 #   scene_02    s2          02-A to 02-D (docs/scripts/scene-02-eunju-scene-2-v0.2.md)
 #   mon_walk    walk        02-E: 현정 follows; three triggers, in order, once each
 #   mon_roam    mon_roam    02-F: the 문방구 door is open; the 집 door ends Monday
-#   sat2_pending            end of build 3b (the world shows the end card)
+#   party       p_walk ... p_f   Scene 03 in Map 02 (docs/scripts/scene-03-eunju-party-v0.1.md):
+#               03-A p_walk (movement free, 현정 follows), 03-B p_b and 03-C p_c (locked), 03-D p_roam,
+#               03-E p_e (locked while it plays) then p_back, 03-F p_f (locked), p_end (the fight starts)
+#   boss1_fight / boss1_done   Build 6b: the Boss 1 fight, then the summary and the end card (World)
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 extends Node
@@ -19,6 +22,7 @@ signal phase_changed(phase: String)
 const DATA_PATH := "res://data/scenes/scene_01.json"
 const SCENE2_PATH := "res://data/scenes/scene_02.json"
 const OC_PATH := "res://data/scenes/optional_sat.json"
+const SCENE3_PATH := "res://data/scenes/scene_03.json"
 const ActorScript := preload("res://characters/actor.gd")
 const InteractableScene := preload("res://maps/interactable.tscn")
 const WALK_TRIGGERS: Array[String] = ["entrance", "gate", "tv"]
@@ -33,11 +37,14 @@ var a2_elapsed := 0.0
 var config: Dictionary = {}
 var config2: Dictionary = {}
 var oc_config: Dictionary = {}
+var config3: Dictionary = {}
 var actors: Dictionary = {}
 ## 현정 while she follows 보람 (02-E); null otherwise.
 var hyunjeong: Node3D = null
 ## The 02-E triggers that have fired ("entrance", "gate", "tv").
 var fired: Dictionary = {}
+## The 03 triggers that have fired, in order: "door", "presents", "bathroom", "living".
+var party_fired: Dictionary = {}
 ## Divides every wait and multiplies walking speed; tests turn it up.
 var time_scale := 1.0
 
@@ -45,6 +52,7 @@ var world: Node3D
 var resource: DialogueResource
 var resource2: DialogueResource
 var oc_resource: DialogueResource
+var resource3: DialogueResource
 var _generation := 0
 var _caption: Label
 var _form_layer: CanvasLayer
@@ -74,6 +82,9 @@ func _ready() -> void:
 		resource2 = load(config2["dialogue"])
 	if not oc_config.is_empty():
 		oc_resource = load(oc_config["dialogue"])
+	config3 = load_json(SCENE3_PATH)
+	if not config3.is_empty():
+		resource3 = load(config3["dialogue"])
 	var layer := CanvasLayer.new()
 	layer.layer = 8
 	add_child(layer)
@@ -93,11 +104,12 @@ func _process(delta: float) -> void:
 	_a2_tick(delta)
 	_follow_tick(delta)
 	_walk_trigger_tick()
+	_party_tick()
 
 
 ## True while the doors stay shut because a scene is still running.
 func blocks_exits() -> bool:
-	return phase in ["a", "a2", "a3", "s2"]
+	return phase in ["a", "a2", "a3", "s2", "p_b", "p_c", "p_e", "p_f", "p_end"]
 
 
 # ── Scene 01 ───────────────────────────────────────────────────────────
@@ -147,6 +159,7 @@ func cancel() -> void:
 		hyunjeong.queue_free()
 	hyunjeong = null
 	fired.clear()
+	party_fired.clear()
 	a3_trigger = ""
 	phase = "none"
 	scene_locked = false
@@ -263,29 +276,38 @@ func enter_mon_roam() -> void:
 func room_loaded(_id: String) -> void:
 	if GameState.progress == "sat_roam":
 		place_optional_conversations()
-	if phase == "walk":
+	if phase == "walk" or phase == "p_walk":
 		_place_hyunjeong_beside_player()
+	if phase == "p_roam":
+		_place_party_roam()
 	world.apply_labels()
+
+
+## The scene whose settings 现정 follows by: Scene 02's walk home, or Scene 03's 03-A.
+func _follow_cfg() -> Dictionary:
+	return config3 if phase == "p_walk" else config2
 
 
 func _place_hyunjeong_beside_player() -> void:
 	hyunjeong = null  # the old one went with the old room
+	var cfg := _follow_cfg()
 	var p: Vector3 = world.player.position
 	var center: float = (world.room.bounds_left + world.room.bounds_right) / 2.0
 	var side := 1.0 if p.x < center else -1.0
-	var x := clampf(p.x + side * float(config2["follow_distance"]), world.room.bounds_left, world.room.bounds_right)
-	hyunjeong = _make_actor(config2["actors"]["hyunjeong"], world.room, Vector3(x, 0, world.player.lane_z(world.player.lane)))
+	var x := clampf(p.x + side * float(cfg["follow_distance"]), world.room.bounds_left, world.room.bounds_right)
+	hyunjeong = _make_actor(cfg["actors"]["hyunjeong"], world.room, Vector3(x, 0, world.player.lane_z(world.player.lane)))
 
 
 ## 현정 stays about follow_distance behind 보람, in any room.
 func _follow_tick(delta: float) -> void:
-	if phase != "walk" or hyunjeong == null or not is_instance_valid(hyunjeong) or world.player == null:
+	if (phase != "walk" and phase != "p_walk") or hyunjeong == null or not is_instance_valid(hyunjeong) or world.player == null:
 		return
-	var dist := float(config2["follow_distance"])
+	var cfg := _follow_cfg()
+	var dist := float(cfg["follow_distance"])
 	var dx: float = hyunjeong.position.x - world.player.position.x
 	if absf(dx) > dist:
 		var goal: float = world.player.position.x + signf(dx) * dist
-		hyunjeong.position.x = move_toward(hyunjeong.position.x, goal, float(config2["follow_speed"]) * delta)
+		hyunjeong.position.x = move_toward(hyunjeong.position.x, goal, float(cfg["follow_speed"]) * delta)
 	hyunjeong.position.z = move_toward(hyunjeong.position.z, world.player.lane_z(world.player.lane), 4.0 * delta)
 
 
@@ -339,8 +361,13 @@ func _fire(trigger: String) -> void:
 func place_optional_conversations() -> void:
 	if GameState.progress != "sat_roam" or world.room == null:
 		return
-	for id in oc_config.get("conversations", {}):
-		var cfg: Dictionary = oc_config["conversations"][id]
+	_place_conversations(oc_config)
+
+
+## Talkers and talk spots of `source`'s conversations that belong to the loaded room.
+func _place_conversations(source: Dictionary) -> void:
+	for id in source.get("conversations", {}):
+		var cfg: Dictionary = source["conversations"][id]
 		if cfg["room"] != world.room_id:
 			continue
 		for spec in cfg["actors"]:
@@ -363,14 +390,175 @@ func place_optional_conversations() -> void:
 ## The first talk plays the conversation (and pays out its stakes); every later
 ## one is a single repeat line with no effect.
 func talk(id: String) -> void:
-	if GameState.progress != "sat_roam":
+	var source := oc_config
+	var res := oc_resource
+	if phase == "p_roam":
+		source = config3
+		res = resource3
+	elif GameState.progress != "sat_roam":
 		return
-	var talked_id: String = oc_config["conversations"][id]["talked_id"]
+	var talked_id: String = source["conversations"][id]["talked_id"]
 	if GameState.has_talked(talked_id):
-		world.show_text(oc_config["repeat_line"])
+		world.show_text(source["repeat_line"])
 		return
 	GameState.mark_talked(talked_id)
-	await world.dialogue_box.play(oc_resource, id, [self])
+	await world.dialogue_box.play(res, id, [self])
+
+
+# ── Scene 03: the party (Map 02) ───────────────────────────────────────
+
+## Starts Scene 03 at 03-A in the room the world loaded (the elevator hall). Takes the party
+## checkpoint first (a party death puts this state back), autosaves, then fades in.
+func start_party() -> void:
+	cancel()
+	var mine := _generation
+	GameState.set_progress("party")
+	GameState.set_boss(str(config3.get("boss", "eunju")))
+	GameState.take_party_snapshot()
+	var at: Dictionary = config3["stages"]["elevator"]["hyunjeong"]
+	hyunjeong = _make_actor(config3["actors"]["hyunjeong"], world.room, Vector3(at["x"], 0, at["z"]))
+	world.apply_labels()
+	world.autosave()
+	_set_phase("p_walk", false)
+	world.cut_to_black()
+	await world.fade_to(0.0)
+	if mine != _generation:
+		return
+	await world.dialogue_box.play(resource3, "a", [self])
+
+
+## The next party trigger that has not fired: door, presents, bathroom, living ("" when all have).
+func next_party_trigger() -> String:
+	for t in ["door", "presents", "bathroom", "living"]:
+		if not party_fired.has(t):
+			return t
+	return ""
+
+
+func _party_tick() -> void:
+	if world == null or world.player == null or world.transitioning or config3.is_empty():
+		return
+	if world.dialogue_box.is_open or world.text_is_open():
+		return
+	match phase:
+		"p_walk":
+			var trig: Dictionary = config3["door_trigger"]
+			if world.room_id != trig["room"]:
+				return
+			var door: Node3D = world.room.get_node_or_null(str(trig["door"]))
+			if door != null and absf(world.player.position.x - door.position.x) <= float(trig["range"]):
+				_party_door()
+		"p_roam":
+			if world.room_id == config3["bathroom_room"]:
+				_party_bathroom()
+		"p_back":
+			if world.room_id == config3["living_room"]:
+				_party_stage()
+
+
+## 03-B: 은주 엄마 opens the door, then straight into 03-C.
+func _party_door() -> void:
+	party_fired["door"] = true
+	var mine := _generation
+	_set_phase("p_b", true)
+	_spawn_stage("door", false)
+	await world.dialogue_box.play(resource3, "b", [self])
+	if mine != _generation:
+		return
+	await _party_presents(mine)
+
+
+## 03-C: fade into the 거실; the presents and choice 2, then the taunts; then 03-D opens.
+func _party_presents(mine: int) -> void:
+	party_fired["presents"] = true
+	await world.fade_to(1.0)
+	if mine != _generation:
+		return
+	_drop_cast()
+	var st: Dictionary = config3["stages"]["presents"]
+	world.enter_room(str(st["room"]), "from_genkan")
+	world.player.place(float(st["player"]["x"]), int(st["player"]["lane"]))
+	_set_phase("p_c", true)
+	_spawn_stage("presents")
+	await world.fade_to(0.0)
+	if mine != _generation:
+		return
+	await world.dialogue_box.play(resource3, "c", [self])
+	if mine != _generation:
+		return
+	await world.fade_to(1.0)
+	if mine != _generation:
+		return
+	_drop_cast()
+	GameState.set_progress("party")
+	_set_phase("p_roam", false)
+	_place_party_roam()
+	world.autosave()
+	await world.fade_to(0.0)
+
+
+## The loaded room's roam cast (stage "roam") and the talkers of the room (03-D).
+func _place_party_roam() -> void:
+	var st: Dictionary = config3["stages"]["roam"]
+	if world.room_id == st["room"]:
+		_spawn_stage("roam", false)
+	_place_conversations(config3)
+
+
+## 03-E: entering the 화장실 fades out; 보람 comes out into the 복도 and hears the phone call.
+func _party_bathroom() -> void:
+	party_fired["bathroom"] = true
+	var mine := _generation
+	_set_phase("p_e", true)
+	await world.fade_to(1.0)
+	if mine != _generation:
+		return
+	_drop_cast()
+	world.enter_room(str(config3["stages"]["phone"]["room"]), "from_bathroom")
+	_spawn_stage("phone")
+	await world.fade_to(0.0)
+	await _wait(float(config3.get("fade_hold", 0.0)))
+	if mine != _generation:
+		return
+	await world.dialogue_box.play(resource3, "e", [self])
+	if mine != _generation:
+		return
+	world.autosave()
+	_set_phase("p_back", false)
+
+
+## 03-F: entering the 거실 after 03-E. The two trigger lines, the flicker, the end card.
+func _party_stage() -> void:
+	party_fired["living"] = true
+	var mine := _generation
+	_set_phase("p_f", true)
+	_drop_cast()
+	_spawn_stage("stage")
+	await world.dialogue_box.play(resource3, "f", [self])
+	if mine != _generation:
+		return
+	_set_phase("p_end", true)
+	world.start_boss1_fight()
+
+
+## Puts a stage's cast in the loaded room. `fresh`: first clears the old cast.
+func _spawn_stage(stage: String, fresh := true) -> void:
+	var st: Dictionary = config3["stages"][stage]
+	if fresh:
+		_drop_cast()
+	if world.room_id != st["room"]:
+		return
+	for id in st.get("actors", {}):
+		var at: Dictionary = st["actors"][id]
+		actors[id] = _make_actor(config3["actors"][id], world.room, Vector3(at["x"], 0, at["z"]))
+	world.apply_labels()
+
+
+func _drop_cast() -> void:
+	clear_actors()
+	if hyunjeong != null and is_instance_valid(hyunjeong):
+		hyunjeong.queue_free()
+	hyunjeong = null
 
 
 # ── Actors ─────────────────────────────────────────────────────────────
@@ -651,3 +839,99 @@ func fly_splat() -> void:
 
 func wipe_stick() -> void:
 	await _say_placeholder("[placeholder: wipes the stick]")
+
+
+# ── Stage directions: Scene 03 (placeholders) ─────────────────────────
+
+func hyunjeong_looks_at_gift() -> void:
+	if hyunjeong != null and is_instance_valid(hyunjeong):
+		hyunjeong.bob()
+	await _wait(0.4)
+
+
+func door_opens() -> void:
+	await _say_placeholder("[placeholder: the door opens]")
+
+
+func mother_looks_over() -> void:
+	_bob_all(["eunju_mom"])
+	await _wait(0.5)
+
+
+func doll_unwrapped() -> void:
+	await _say_placeholder("[placeholder: a doll with real hair]")
+
+
+func eunju_picks_up_gift() -> void:
+	if _has("eunju"):
+		actors["eunju"].raise_hand()
+	await _wait(0.4)
+
+
+func pencils_shown() -> void:
+	await _say_placeholder("[placeholder: a set of pencils]")
+
+
+func twins_laugh() -> void:
+	_bob_all(["misuk", "migyeong"])
+	await _wait(0.5)
+
+
+func eunju_pockets_pencils() -> void:
+	if _has("eunju"):
+		actors["eunju"].lower_hand()
+	await _wait(0.4)
+
+
+func eunju_tosses_pencils() -> void:
+	if _has("eunju"):
+		actors["eunju"].lower_hand()
+	await _wait(0.4)
+
+
+func eunju_listens() -> void:
+	_bob_all(["eunju"])
+	await _wait(0.3)
+
+
+func dad_falls_asleep() -> void:
+	await _say_placeholder("[placeholder: falls asleep with the glass]")
+
+
+func fridge_slammed() -> void:
+	await _say_placeholder("[placeholder: slams the fridge]")
+
+
+func phone_call_starts() -> void:
+	_bob_all(["eunju_mom"])
+	await _wait(0.3)
+
+
+func eunju_takes_mic() -> void:
+	if _has("eunju"):
+		actors["eunju"].raise_hand()
+	await _wait(0.4)
+
+
+func number_punched_in() -> void:
+	await _say_placeholder("[placeholder: the number is punched in]")
+
+
+func boram_hesitates() -> void:
+	await _wait(0.4)
+
+
+## The lights flicker (placeholder): the room light stutters for flicker_seconds.
+func lights_flicker() -> void:
+	var light: Light3D = world.room.get_node_or_null("Light") if world.room != null else null
+	var seconds := float(config3.get("flicker_seconds", 1.0))
+	if light == null:
+		await _wait(seconds)
+		return
+	var base := light.light_energy
+	var tween := create_tween()
+	for i in 6:
+		tween.tween_property(light, "light_energy", base * 0.1, seconds / 12.0 / time_scale)
+		tween.tween_property(light, "light_energy", base, seconds / 12.0 / time_scale)
+	await tween.finished
+	light.light_energy = base
